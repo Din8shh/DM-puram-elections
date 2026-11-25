@@ -30,6 +30,47 @@ header#top { position: sticky; top: 0; z-index: 10; display: flex; align-items: 
   font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 
 main { max-width: 640px; margin: 0 auto; padding: 4px 16px calc(var(--tabs-h) + 28px); }
+main.wide { max-width: 1240px; }
+.an-head { margin: 4px 0 14px; flex-wrap: wrap; gap: 10px; }
+.kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.kpi { padding: 14px; }
+.kpi .num { font-size: 28px; font-weight: 700; line-height: 1.15; }
+.kpi b { display: block; font-size: 14px; margin-top: 2px; }
+.kpi.good .num { color: var(--brand); }
+.insights { margin-top: 12px; background: #F1F7F3; border-color: #CFE3D6; }
+.insights ul { margin: 6px 0 0; padding-left: 20px; } .insights li { margin: 4px 0; }
+.an-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.an-grid > *, .segs-grid > *, .kpis > * { min-width: 0; }
+section.card h2 { margin: 0 0 12px; }
+.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.gcol { display: flex; flex-direction: column; gap: 6px; }
+.big2 { font-size: 22px; font-weight: 700; }
+.c-f { color: #B5562B; } .c-m { color: #2F5F8F; }
+.pyr { display: flex; flex-direction: column; gap: 8px; }
+.pyr-row { display: grid; grid-template-columns: 48px 1fr 56px 1fr 48px; gap: 8px; align-items: center; color: inherit; text-decoration: none; font-size: 13px; }
+.pyr-row:hover { background: #F6F4EE; border-radius: 6px; }
+.pyr-row b { text-align: center; font-family: "Noto Sans", sans-serif; }
+.pyr-row .r { text-align: right; }
+.pyr .bar { height: 20px; display: flex; } .pyr .bar.l { justify-content: flex-end; }
+.pyr .bar i { display: block; height: 100%; border-radius: 4px; }
+.pyr i.f { background: #B5562B; } .pyr i.m { background: #2F5F8F; }
+table.an th, table.an td { padding: 8px 10px; text-align: left; white-space: nowrap; }
+table.an .n { text-align: right; font-family: "Noto Sans", sans-serif; font-variant-numeric: tabular-nums; }
+table.an td.bad { color: var(--late); font-weight: 600; } table.an td.ok { color: var(--brand); font-weight: 600; }
+.tablewrap.flat { border: 0; }
+.heat { display: inline-block; min-width: 44px; padding: 2px 6px; border-radius: 6px; text-align: right;
+  background: color-mix(in srgb, #1F6B4A calc(var(--p) * 0.6%), #F1EEE6); color: #1C2321; }
+.pbar { display: inline-block; width: 60px; height: 8px; background: #ECE9E1; border-radius: 4px; overflow: hidden; margin-right: 6px; vertical-align: middle; }
+.pbar i { display: block; height: 100%; background: #E3B83F; }
+.hbar { display: grid; grid-template-columns: 44px 1fr 150px; gap: 10px; align-items: center; margin: 6px 0; font-size: 14px; }
+.hbar .bar { height: 16px; background: #F1EEE6; border-radius: 4px; overflow: hidden; } .hbar .bar i { display: block; height: 100%; background: var(--brand); }
+.segs-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.seg { display: flex; flex-direction: column; gap: 6px; }
+.seg .ideas { margin: 0 0 6px; padding-left: 18px; } .seg .ideas li { margin: 3px 0; }
+.seg a { margin-top: auto; }
+.rules { margin-top: 12px; background: #FBF3DC; border-color: #EBD9A0; }
+@media (max-width: 1000px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .segs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .an-grid, .segs-grid, .g2 { grid-template-columns: 1fr; } }
 main.has-bar { padding-bottom: calc(var(--tabs-h) + 110px); }
 
 /* bottom nav */
@@ -298,6 +339,8 @@ table.walk th:first-child, table.walk td:first-child { min-width: 0; width: 1%; 
 table.walk td:nth-child(2), table.walk td:nth-child(4), table.walk td:nth-child(5) { white-space: nowrap; }
 table.walk td:last-child { min-width: 90px; width: 22%; }
 @media print {
+  main.wide { max-width: none; } .an-head select, .an-head button { display: none; }
+  .an-grid, .segs-grid, .kpis { break-inside: avoid; } section.card { break-inside: avoid; }
   @page { size: A4 landscape; margin: 10mm; }
   header#top, nav#tabs, .noprint, #toast, .actionbar { display: none !important; }
   body { background: #fff; }

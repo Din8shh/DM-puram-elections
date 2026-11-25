@@ -200,7 +200,7 @@ $("#logoutBtn").addEventListener("click", async () => {
 
 function setTab(name) {
   $$("#tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === name));
-  main.classList.remove("has-bar");
+  main.classList.remove("has-bar", "wide");
   $("#actionbar")?.remove();
   $(".sheet-bg")?.remove();
 }
@@ -246,7 +246,7 @@ function applyFilters(qb, f) {
   if (f.lean === "ours") qb = qb.in("leaning", ["strong", "leaning"]);
   else if (f.lean) qb = qb.eq("leaning", f.lean);
   if (f.gender) qb = qb.eq("gender", f.gender);
-  if (f.age === "youth") qb = qb.lte("age", 29);
+  if (f.age && AGE_FILTER[f.age]) qb = qb.gte("age", AGE_FILTER[f.age][0]).lte("age", AGE_FILTER[f.age][1]);
   if (f.mine) qb = qb.eq("assigned_to", me.id);
   switch (f.status) {
     case "not_contacted": qb = qb.eq("contacted", false); break;
@@ -1139,6 +1139,7 @@ async function viewReports() {
       <h2>${esc(t("tools"))}${subIn("tools")}</h2>
       <div class="card flat">
         ${hasTransport ? `<a class="task" href="#/transport"><span class="tile">${icon("car")}</span><span class="grow"><b>${esc(t("transport_plan"))}</b>${sub("transport_plan")}</span>${icon("chev")}</a>` : ""}
+        ${isAdmin() ? `<a class="task" href="#/analysis"><span class="tile">${icon("chart")}</span><span class="grow"><b>${esc(t("analysis"))}</b><span class="en">${esc(STRINGS.en.analysis_sub)}</span></span>${icon("chev")}</a>` : ""}
         <a class="task" href="#/activity"><span class="tile">${icon("clock")}</span><span class="grow"><b>${esc(t("updates_title"))}</b>${sub("updates_title")}</span>${icon("chev")}</a>
         <a class="task" href="#/print"><span class="tile">${icon("print")}</span><span class="grow"><b>${esc(t("walk_list"))}</b>${sub("walk_list")}</span>${icon("chev")}</a>
       </div>
@@ -1461,6 +1462,240 @@ async function viewRoster(id) {
 }
 
 
+// ───────── analytics (super admin / admin, built for a laptop screen) ─────────
+const AGE_BANDS = [
+  { k: "first", en: "18–22", te: "18–22", min: 18, max: 22 },
+  { k: "young", en: "23–29", te: "23–29", min: 23, max: 29 },
+  { k: "a30", en: "30–44", te: "30–44", min: 30, max: 44 },
+  { k: "a45", en: "45–59", te: "45–59", min: 45, max: 59 },
+  { k: "a60", en: "60–74", te: "60–74", min: 60, max: 74 },
+  { k: "a75", en: "75+", te: "75+", min: 75, max: 200 },
+];
+const AGE_FILTER = { first: [18, 22], young: [23, 29], youth: [18, 29], a30: [30, 44], a45: [45, 59], a60: [60, 74], a75: [75, 200], senior: [60, 200] };
+const L = (en, te) => (lang === "te" ? `${esc(te)}<span class="en">${esc(en)}</span>` : esc(en));
+const Lin = (en, te) => (lang === "te" ? `${esc(te)} <span class="en in">· ${esc(en)}</span>` : esc(en));
+
+function summarize(list) {
+  const s = { n: list.length, visited: 0, exp: 0, persu: 0, unvisited: 0, due: 0, away: 0, voted: 0 };
+  LEANINGS.forEach((l) => (s[l] = 0));
+  const today = todayIST();
+  for (const v of list) {
+    const l = v.leaning || "unknown";
+    s[l] = (s[l] || 0) + 1;
+    s.exp += WEIGHT[l] || 0;
+    if (v.contacted) s.visited++; else s.unvisited++;
+    if (["undecided", "unlikely"].includes(l) || (l === "unknown")) s.persu++;
+    if (v.follow_up_on && v.follow_up_on <= today) s.due++;
+    if (v.away) s.away++;
+    if (v.voted) s.voted++;
+  }
+  s.ours = s.strong + s.leaning;
+  return s;
+}
+const supOrder = () => ["strong", "leaning", "undecided", ...(hasUnlikely ? ["unlikely"] : []), "opposed", "unknown"];
+const miniStack = (s, h = 14) => `<div class="stackbar" style="height:${h}px">${supOrder().map((l) => s[l] ? `<span style="width:${(s[l] / s.n) * 100}%;background:${SUP_COLOR[l]}" title="${esc(t("lean_" + l))}: ${s[l]}"></span>` : "").join("")}</div>`;
+const goAttr = (patch) => `data-go="${esc(JSON.stringify(patch))}"`;
+
+async function viewAnalytics() {
+  setTab("reports");
+  main.classList.add("wide");
+  if (!isAdmin()) { main.innerHTML = `<p class="card">${esc(t("no_access") || "Only admins can see this page.")}</p>`; return; }
+  main.innerHTML = loading;
+  let all;
+  try {
+    all = await fetchAll(() => sb.from("voters").select("serial,hamlet_id,gender,age,house_no,leaning,contacted,follow_up_on,away,voted,assigned_to,slip_delivered"));
+  } catch (err) { main.innerHTML = ""; return fail(err); }
+  const hf = store.get("anHamlet", "");
+  const rows = hf ? all.filter((v) => String(v.hamlet_id) === String(hf)) : all;
+  const S = summarize(rows);
+  const women = rows.filter((v) => v.gender === "F"), men = rows.filter((v) => v.gender === "M");
+  const W = summarize(women), M = summarize(men);
+  const ages = rows.map((v) => v.age).filter(Boolean);
+  const avgAge = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
+  const inBand = (v, b) => v.age >= b.min && v.age <= b.max;
+  const bands = AGE_BANDS.map((b) => ({ ...b, F: summarize(women.filter((v) => inBand(v, b))), M: summarize(men.filter((v) => inBand(v, b))), all: summarize(rows.filter((v) => inBand(v, b))) }));
+  const maxBand = Math.max(1, ...bands.flatMap((b) => [b.F.n, b.M.n]));
+
+  // households: same hamlet + same house number
+  const houses = new Map();
+  for (const v of rows) {
+    if (!v.house_no) continue;
+    const k = v.hamlet_id + "|" + v.house_no;
+    if (!houses.has(k)) houses.set(k, []);
+    houses.get(k).push(v);
+  }
+  const sizeBuckets = [["1", 1, 1], ["2", 2, 2], ["3", 3, 3], ["4", 4, 4], ["5", 5, 5], ["6–9", 6, 9], ["10+", 10, 999]];
+  const hs = [...houses.values()];
+  const sizeDist = sizeBuckets.map(([lbl, a, b]) => { const g = hs.filter((h) => h.length >= a && h.length <= b); return { lbl, houses: g.length, voters: g.reduce((s, h) => s + h.length, 0) }; });
+  const maxSize = Math.max(1, ...sizeDist.map((d) => d.voters));
+  const bigOpen = hs.filter((h) => h.length >= 5).map((h) => ({ h, s: summarize(h) }))
+    .filter((x) => x.s.persu >= Math.ceil(x.s.n / 2))
+    .sort((a, b) => b.s.persu - a.s.persu || b.s.n - a.s.n).slice(0, 12);
+
+  // hamlets
+  const hamRows = hamlets.map((h) => {
+    const list = all.filter((v) => v.hamlet_id === h.id);
+    const s = summarize(list);
+    const fem = list.filter((v) => v.gender === "F").length;
+    const yth = list.filter((v) => v.age && v.age <= 29).length;
+    const old = list.filter((v) => v.age >= 60).length;
+    const unassigned = list.filter((v) => !v.assigned_to).length;
+    return { h, s, fem, yth, old, unassigned, target: h.target_votes || 0 };
+  });
+  const maxPersu = Math.max(1, ...hamRows.map((r) => r.s.persu));
+
+  // segments with outreach playbook
+  const seg = (key, en, te, list, go, why, ideas) => ({ key, en, te, s: summarize(list), go, why, ideas });
+  const segments = [
+    seg("first", "First-time & new voters (18–22)", "కొత్త ఓటర్లు (18–22)", rows.filter((v) => v.age >= 18 && v.age <= 22), { age: "first" },
+      "Many are voting for the first time and have no fixed loyalty yet.",
+      ["Meet them in small groups at the playground, college bus stop or evening hangouts, not only at home.", "Talk about jobs, skill training, sports facilities and internet/phone signal in the village.", "Ask 2–3 respected young people from each hamlet to join as volunteers and bring friends.", "Help them check their name and booth on the roll and remind them of the poll date."]),
+    seg("young", "Young voters (23–29)", "యువత (23–29)", rows.filter((v) => v.age >= 23 && v.age <= 29), { age: "young" },
+      "Working-age, often away during the day; reachable on WhatsApp and in the evenings.",
+      ["Visit after 6 pm or on Sundays.", "Share a short manifesto on WhatsApp: roads, street lights, drainage, work under MGNREGS.", "Hold one youth meeting per hamlet with clear, local promises you can keep."]),
+    seg("women", "Women", "మహిళలు", women, { gender: "F" },
+      "Half the electorate; often decide together with the family, and best reached by women volunteers.",
+      ["Send women volunteers for door-to-door visits during the day.", "Meet self-help groups (DWCRA/SHG) and talk about drinking water, ration shop timings, safety and street lights.", "Speak to the mother or eldest woman in big households; she often sways the house.", "Explain how the panchayat will help with pensions, housing and anganwadi services."]),
+    seg("elderly", "Elders (60+)", "పెద్దలు (60+)", rows.filter((v) => v.age >= 60), { age: "senior" },
+      "High turnout and respected in the family; they influence younger voters.",
+      ["Visit personally and take blessings; a respectful visit counts a lot.", "Talk about pensions, health sub-centre and road to the bus stop.", "Tell them their booth and the poll timings; ask family members to go with them."]),
+    seg("persuadable", "50-50 and Unlikely", "50-50, కష్టం", rows.filter((v) => ["undecided", "unlikely"].includes(v.leaning)), { lean: "undecided" },
+      "These voters can still move. Every one who shifts to Likely adds about 20–45 expected votes per 100.",
+      ["Second visit by the candidate or a respected elder, not the same worker.", "Find their one main issue and come back with a clear answer.", "Set a follow-up date in the app and keep it."]),
+    seg("unvisited", "Not visited yet", "ఇంకా కలవలేదు", rows.filter((v) => !v.contacted), { status: "not_contacted" },
+      "Support is unknown until someone meets them.",
+      ["Assign every unvisited voter to a worker and give a daily target.", "Start with big households: one visit covers many voters.", "Print walk lists for hamlets with the most unvisited voters."]),
+    seg("away", "Outstation voters", "ఊరిలో లేని వారు", rows.filter((v) => v.away), { status: "away" },
+      "Living outside for work or study; need early contact to plan travel on poll day.",
+      ["Call them now, not the week before the poll.", "Ask family members to remind them and confirm their travel plan in the app.", "Do not pay for their travel or tickets; that is illegal."]),
+  ];
+
+  // automatic insights
+  const ins = [];
+  if (W.n && M.n && Math.abs(pct(W.visited, W.n) - pct(M.visited, M.n)) >= 5) {
+    const low = pct(W.visited, W.n) < pct(M.visited, M.n) ? ["Women", "మహిళలు", W] : ["Men", "పురుషులు", M];
+    ins.push(`${low[0]} are visited less (${pct(low[2].visited, low[2].n)}% vs ${pct((low[2] === W ? M : W).visited, (low[2] === W ? M : W).n)}%). ${low[2] === W ? "Send women volunteers." : "Plan evening visits."}`);
+  }
+  const bandLow = [...bands].filter((b) => b.all.n >= 20).sort((a, b) => pct(a.all.visited, a.all.n) - pct(b.all.visited, b.all.n))[0];
+  if (bandLow) ins.push(`Age ${bandLow.en} has the lowest coverage: ${pct(bandLow.all.visited, bandLow.all.n)}% visited of ${nf(bandLow.all.n)}.`);
+  const topPersu = [...hamRows].sort((a, b) => b.s.persu - a.s.persu)[0];
+  if (topPersu && !hf) ins.push(`${hamletName(topPersu.h.id)} has the most voters still open (${nf(topPersu.s.persu)} not yet Sure, Likely or Against).`);
+  const gapRows = hamRows.filter((r) => r.target && r.s.exp < r.target).sort((a, b) => (b.target - b.s.exp) - (a.target - a.s.exp));
+  if (gapRows.length && !hf) ins.push(`${gapRows.length} hamlet${gapRows.length > 1 ? "s are" : " is"} below target. Biggest gap: ${hamletName(gapRows[0].h.id)} needs ${nf(Math.round(gapRows[0].target - gapRows[0].s.exp))} more expected votes.`);
+  const big = hs.filter((h) => h.length >= 5);
+  if (big.length) ins.push(`${nf(big.length)} households have 5 or more voters (${nf(big.reduce((s, h) => s + h.length, 0))} voters, ${pct(big.reduce((s, h) => s + h.length, 0), S.n)}% of the roll). Win the house, win the votes.`);
+  if (S.due) ins.push(`${nf(S.due)} follow-ups are due or overdue.`);
+
+  const target = hf ? (hamlets.find((h) => String(h.id) === String(hf))?.target_votes || 0) : hamlets.reduce((s, h) => s + (h.target_votes || 0), 0);
+  const tile = (val, en, te, note = "", cls = "") => `<div class="card kpi ${cls}"><div class="num">${val}</div><b>${L(en, te)}</b>${note ? `<span class="en">${note}</span>` : ""}</div>`;
+  const opt = (val, label, cur) => `<option value="${esc(val)}" ${String(cur) === String(val) ? "selected" : ""}>${esc(label)}</option>`;
+  const genderCol = (en, te, s, cls, go) => `
+    <div class="gcol">
+      <div class="row between"><b class="${cls}">${L(en, te)}</b><span class="num big2">${nf(s.n)}</span></div>
+      <div class="small muted">${pct(s.n, S.n)}% · ${esc(STRINGS.en.visited_word)} ${pct(s.visited, s.n)}% · ${esc(STRINGS.en.expected.split(" ")[0])} ${nf(Math.round(s.exp))}</div>
+      ${miniStack(s, 16)}
+      <div class="small" style="margin-top:6px">${esc(t("lean_strong"))}+${esc(t("lean_leaning"))} <b class="num">${pct(s.ours, s.n)}%</b> · 50-50 <b class="num">${nf(s.undecided)}</b> · ${esc(t("lean_unknown"))} <b class="num">${nf(s.unknown)}</b></div>
+      <a href="#/voters" ${goAttr(go)} class="small">${esc(t("view_list"))} →</a>
+    </div>`;
+
+  main.innerHTML = `
+    <div class="row between an-head">
+      <h1 style="margin:0">${L("Voter analysis", "ఓటర్ల విశ్లేషణ")}</h1>
+      <div class="row" style="gap:8px">
+        <select id="anHamlet" style="width:auto">${opt("", t("all_hamlets"), hf)}${hamlets.map((h) => opt(h.id, hamletName(h.id), hf)).join("")}</select>
+        <button type="button" id="anPrint" class="noprint">${icon("print", "width:18px;height:18px")} ${esc(t("print") || "Print")}</button>
+      </div>
+    </div>
+
+    <div class="kpis">
+      ${tile(nf(S.n), "Voters", "ఓటర్లు", `${nf(houses.size)} households`)}
+      ${tile(pct(W.n, S.n) + "%", "Women", "మహిళలు", `${nf(W.n)} women · ${nf(M.n)} men`)}
+      ${tile(avgAge, "Average age", "సగటు వయసు", `${nf(rows.filter((v) => v.age <= 29).length)} under 30`)}
+      ${tile(pct(S.visited, S.n) + "%", "Visited", "కలిశాం", `${nf(S.unvisited)} still to visit`)}
+      ${tile(nf(Math.round(S.exp)), "Expected votes", "అంచనా ఓట్లు", target ? `target ${nf(target)} · ${S.exp >= target ? "on track" : "need " + nf(Math.round(target - S.exp))}` : "no target set", S.exp >= target && target ? "good" : "")}
+      ${tile(nf(S.persu), "Still open", "ఇంకా తేలని వారు", "50-50, Unlikely or not known")}
+    </div>
+
+    ${ins.length ? `<div class="card insights"><b>${L("What the numbers say", "సంఖ్యలు ఏం చెబుతున్నాయి")}</b><ul>${ins.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+
+    <div class="an-grid">
+      <section class="card">
+        <h2>${L("Women and men", "మహిళలు, పురుషులు")}</h2>
+        <div class="g2">${genderCol("Women", "మహిళలు", W, "c-f", { gender: "F" })}${genderCol("Men", "పురుషులు", M, "c-m", { gender: "M" })}</div>
+      </section>
+
+      <section class="card">
+        <h2>${L("Age groups", "వయసు వారీగా")} <span class="en in">women left, men right</span></h2>
+        <div class="pyr">
+          ${bands.map((b) => `<a class="pyr-row" href="#/voters" ${goAttr({ age: b.k })}>
+            <span class="num r">${nf(b.F.n)}</span><span class="bar l"><i class="f" style="width:${(b.F.n / maxBand) * 100}%"></i></span>
+            <b>${b.en}</b>
+            <span class="bar"><i class="m" style="width:${(b.M.n / maxBand) * 100}%"></i></span><span class="num">${nf(b.M.n)}</span></a>`).join("")}
+        </div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:12px">
+      <h2>${L("Support by age group", "వయసు వారీగా మద్దతు")}</h2>
+      <div class="tablewrap flat"><table class="an">
+        <thead><tr><th>Age</th><th class="n">Voters</th><th class="n">% of roll</th><th class="n">Visited</th><th style="min-width:180px">Support</th><th class="n">Sure+Likely</th><th class="n">50-50</th><th class="n">Expected</th></tr></thead>
+        <tbody>${bands.map((b) => `<tr><td><a href="#/voters" ${goAttr({ age: b.k })}>${b.en}</a></td><td class="n">${nf(b.all.n)}</td><td class="n">${pct(b.all.n, S.n)}%</td><td class="n">${pct(b.all.visited, b.all.n)}%</td><td>${miniStack(b.all)}</td><td class="n">${pct(b.all.ours, b.all.n)}%</td><td class="n">${nf(b.all.undecided)}</td><td class="n">${nf(Math.round(b.all.exp))}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </section>
+
+    ${hf ? "" : `<section class="card" style="margin-top:12px">
+      <h2>${L("Hamlets", "గ్రామాలు")} <span class="en in">sorted by voters still open</span></h2>
+      <div class="tablewrap flat"><table class="an">
+        <thead><tr><th>Hamlet</th><th class="n">Voters</th><th class="n">Women</th><th class="n">18–29</th><th class="n">60+</th><th class="n">Visited</th><th style="min-width:160px">Support</th><th class="n">Expected</th><th class="n">Target</th><th class="n">Still open</th><th class="n">Not assigned</th><th class="n">Away</th></tr></thead>
+        <tbody>${[...hamRows].sort((a, b) => b.s.persu - a.s.persu).map((r) => `<tr>
+          <td><a href="#/voters" ${goAttr({ hamlet: String(r.h.id) })}>${esc(hamletName(r.h.id))}</a></td>
+          <td class="n">${nf(r.s.n)}</td><td class="n">${pct(r.fem, r.s.n)}%</td><td class="n">${pct(r.yth, r.s.n)}%</td><td class="n">${pct(r.old, r.s.n)}%</td>
+          <td class="n"><span class="heat" style="--p:${pct(r.s.visited, r.s.n)}">${pct(r.s.visited, r.s.n)}%</span></td>
+          <td>${miniStack(r.s)}</td>
+          <td class="n">${nf(Math.round(r.s.exp))}</td>
+          <td class="n ${r.target && r.s.exp < r.target ? "bad" : r.target ? "ok" : ""}">${r.target ? nf(r.target) : "—"}</td>
+          <td class="n"><span class="pbar"><i style="width:${(r.s.persu / maxPersu) * 100}%"></i></span>${nf(r.s.persu)}</td>
+          <td class="n ${r.unassigned ? "bad" : ""}">${nf(r.unassigned)}</td><td class="n">${nf(r.s.away)}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </section>`}
+
+    <div class="an-grid" style="margin-top:12px">
+      <section class="card">
+        <h2>${L("Household size", "ఇంటికి ఎంత మంది ఓటర్లు")}</h2>
+        <p class="small muted" style="margin-top:0">Voters living in houses of each size. Bigger houses give more votes per visit.</p>
+        ${sizeDist.map((d) => `<div class="hbar"><span>${d.lbl}</span><span class="bar"><i style="width:${(d.voters / maxSize) * 100}%"></i></span><span class="num">${nf(d.voters)} <small class="muted">in ${nf(d.houses)} houses</small></span></div>`).join("")}
+      </section>
+      <section class="card">
+        <h2>${L("Big houses still open", "ఇంకా తేలని పెద్ద ఇళ్ళు")}</h2>
+        <p class="small muted" style="margin-top:0">5+ voters, at least half not yet Sure, Likely or Against. Send a senior person.</p>
+        ${bigOpen.length ? `<div class="tablewrap flat"><table class="an"><thead><tr><th>House</th><th>Hamlet</th><th class="n">Voters</th><th class="n">Open</th><th style="min-width:110px">Support</th></tr></thead><tbody>
+          ${bigOpen.map(({ h, s }) => `<tr><td><a href="#/voters" ${goAttr({ q: h[0].house_no, hamlet: String(h[0].hamlet_id) })}>${esc(h[0].house_no)}</a></td><td>${esc(hamletName(h[0].hamlet_id))}</td><td class="n">${s.n}</td><td class="n">${s.persu}</td><td>${miniStack(s)}</td></tr>`).join("")}
+        </tbody></table></div>` : `<p class="muted">None right now.</p>`}
+      </section>
+    </div>
+
+    <h2 style="margin-top:24px">${L("Who to reach, and how", "ఎవరిని, ఎలా చేరుకోవాలి")}</h2>
+    <div class="segs-grid">
+      ${segments.map((g) => `<section class="card seg">
+        <div class="row between" style="align-items:flex-start"><b>${L(g.en, g.te)}</b><span class="num big2">${nf(g.s.n)}</span></div>
+        <div class="small muted">${pct(g.s.n, S.n)}% of voters · ${pct(g.s.visited, g.s.n)}% visited · ${nf(g.s.persu)} still open</div>
+        ${g.s.n ? miniStack(g.s, 12) : ""}
+        <p class="small" style="margin:10px 0 6px">${esc(g.why)}</p>
+        <ul class="small ideas">${g.ideas.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+        <a href="#/voters" ${goAttr(g.go)} class="small">${esc(t("view_list"))} →</a>
+      </section>`).join("")}
+    </div>
+
+    <div class="card rules">
+      <b>${L("Stay within the election rules", "ఎన్నికల నియమాలు పాటించండి")}</b>
+      <p class="small" style="margin:6px 0 0">Win votes with issues, respect and repeated contact. Offering cash, gifts, liquor, free travel or any other inducement, or threatening anyone, is a crime under the election law and can cancel the election. Follow the State Election Commission's code of conduct for meetings, campaign times and the silence period before polling.</p>
+    </div>
+    <p class="small muted center">${esc(t("refreshed"))}: ${esc(fmtTime(new Date().toISOString()))}</p>`;
+
+  $("#anHamlet").addEventListener("change", (e) => { store.set("anHamlet", e.target.value); viewAnalytics(); });
+  $("#anPrint").addEventListener("click", () => window.print());
+}
+
 // ───────── router & boot ─────────
 function route() {
   if (!me) return;
@@ -1474,6 +1709,7 @@ function route() {
   if (h.startsWith("/follow")) return viewFollow();
   if (h.startsWith("/poll")) return viewPoll();
   if (h.startsWith("/reports") || h.startsWith("/dash")) return viewReports();
+  if (h.startsWith("/analysis")) return viewAnalytics();
   m = h.match(/^\/team\/(new|p\/([\w-]+))/);
   if (m) return viewPerson(m[2] || "new");
   if (h.startsWith("/team")) return viewTeam();
