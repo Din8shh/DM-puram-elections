@@ -7,8 +7,12 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 const main = $("#main");
 const LEANINGS = ["strong", "leaning", "undecided", "opposed", "unknown"];
 const PAGE = 40;
-const VOTER_COLS = "serial,ward,hamlet_id,name,name_en,relation_type,relation_name,age,gender,house_no,epic,photo_path," +
+const BASE_COLS = "serial,ward,hamlet_id,name,name_en,relation_type,relation_name,age,gender,house_no,epic,photo_path," +
   "needs_review,phone,leaning,contacted,notes,needs_transport,away,assigned_to,voted,voted_at,updated_at,slip_delivered,follow_up_on";
+// Transport columns exist only after supabase/migrations/004_transport.sql has been run; boot() checks.
+let hasTransport = false;
+let VOTER_COLS = BASE_COLS;
+const TRAVEL = ["unknown", "coming", "needs_help", "not_coming"];
 
 // ───────── small helpers ─────────
 const store = {
@@ -46,6 +50,14 @@ const photoCache = new Map();
 const isSuper = () => me?.role === "superadmin";
 const isAdmin = () => me?.role === "admin" || isSuper();
 const canAssign = () => isAdmin() || me?.role === "incharge";
+const canTransport = canAssign;
+let vehicles = [];          // poll-day vehicles
+async function loadVehicles() {
+  if (!hasTransport) return;
+  const { data } = await sb.from("vehicles").select("*").order("id");
+  vehicles = data || [];
+}
+const vehicleName = (id) => vehicles.find((x) => x.id === id)?.label || "";
 const hamletName = (id) => { const h = hamlets.find((x) => x.id === id); return h ? (lang === "te" ? h.name_te : h.name_en || h.name_te) : ""; };
 const personName = (id) => team.find((p) => p.id === id)?.full_name || "";
 const pollMode = () => store.get("pollMode", false);
@@ -138,6 +150,9 @@ function applyFilters(qb, f) {
     case "slip_pending": qb = qb.eq("slip_delivered", false); break;
     case "slip_done": qb = qb.eq("slip_delivered", true); break;
     case "unassigned": qb = qb.is("assigned_to", null); break;
+    case "away_needs_help": qb = qb.eq("away", true).eq("travel_plan", "needs_help"); break;
+    case "away_unknown": qb = qb.eq("away", true).eq("travel_plan", "unknown"); break;
+    case "ride_unbooked": qb = qb.eq("needs_transport", true).is("vehicle_id", null); break;
   }
   const q = (f.q || "").replace(/[,()"'%*\\:]/g, " ").trim();
   if (!q) return qb;
@@ -181,7 +196,7 @@ async function viewSearch() {
       <div class="filters">
         <select id="fHamlet">${opt("", t("all_hamlets"), filters.hamlet)}${hamlets.map((h) => opt(h.id, `${h.id}. ${hamletName(h.id)}`, filters.hamlet)).join("")}</select>
         <select id="fLean">${opt("", t("all_leanings"), filters.lean)}${opt("ours", t("ours"), filters.lean)}${LEANINGS.map((l) => opt(l, t("lean_" + l), filters.lean)).join("")}</select>
-        <select id="fStatus">${opt("", t("all_status"), filters.status)}${["follow_up_due", "not_contacted", "contacted", "slip_pending", "slip_done", "not_voted", "voted", "ours_not_voted", "transport", "away", "has_phone", "mine", ...(canAssign() ? ["unassigned"] : []), "review"].map((s) => opt(s, t("st_" + s), filters.status)).join("")}</select>
+        <select id="fStatus">${opt("", t("all_status"), filters.status)}${["follow_up_due", "not_contacted", "contacted", "slip_pending", "slip_done", "not_voted", "voted", "ours_not_voted", "transport", ...(hasTransport ? ["ride_unbooked"] : []), "away", ...(hasTransport ? ["away_unknown", "away_needs_help"] : []), "has_phone", "mine", ...(canAssign() ? ["unassigned"] : []), "review"].map((s) => opt(s, t("st_" + s), filters.status)).join("")}</select>
         <select id="fGender">${opt("", t("all_genders"), filters.gender)}${opt("M", t("male"), filters.gender)}${opt("F", t("female"), filters.gender)}</select>
       </div>
     </div>
@@ -326,7 +341,7 @@ async function exportCsv() {
 async function viewVoter(serial) {
   setTab("search");
   main.innerHTML = `<p class="center muted">…</p>`;
-  const { data: v, error } = await sb.from("voters").select("*").eq("serial", serial).maybeSingle();
+  const [{ data: v, error }] = await Promise.all([sb.from("voters").select("*").eq("serial", serial).maybeSingle(), loadVehicles()]);
   if (error) return fail(error);
   if (!v) { main.innerHTML = `<p class="empty">${esc(t("not_found"))}</p>`; return; }
 
@@ -382,7 +397,12 @@ async function viewVoter(serial) {
         <button type="button" class="small" style="margin-top:18px" id="fuClear">✕</button>
       </div>
       <label class="check"><input type="checkbox" name="needs_transport" ${v.needs_transport ? "checked" : ""}> ${esc(t("transport"))}</label>
+      ${hasTransport ? `<label class="f" id="vehBox" ${v.needs_transport || v.vehicle_id ? "" : "hidden"}>🚗 ${esc(t("vehicle"))}<select name="vehicle_id"><option value="">${esc(t("not_booked"))}</option>${vehicles.map((x) => `<option value="${x.id}" ${x.id === v.vehicle_id ? "selected" : ""}>${esc(x.label)}${x.driver_name ? " · " + esc(x.driver_name) : ""}</option>`).join("")}</select></label>` : ""}
       <label class="check"><input type="checkbox" name="away" ${v.away ? "checked" : ""}> ${esc(t("away"))}</label>
+      ${hasTransport ? `<div class="row" id="awayBox" ${v.away ? "" : "hidden"}>
+        <label class="f grow">📍 ${esc(t("away_place"))}<input name="away_place" value="${esc(v.away_place || "")}" placeholder="${esc(t("away_place_ph"))}"></label>
+        <label class="f grow">${esc(t("travel_plan"))}<select name="travel_plan">${TRAVEL.map((x) => `<option value="${x}" ${v.travel_plan === x ? "selected" : ""}>${esc(t("tp_" + x))}</option>`).join("")}</select></label>
+      </div>` : ""}
       ${canAssign() ? `<label class="f">${esc(t("assigned"))}<select name="assigned_to"><option value="">${esc(t("nobody"))}</option>${team.filter((p) => p.active).map((p) => `<option value="${p.id}" ${p.id === v.assigned_to ? "selected" : ""}>${esc(p.full_name || p.username)}</option>`).join("")}</select></label>`
         : v.assigned_to ? `<div class="small muted">${esc(t("assigned"))}: ${esc(personName(v.assigned_to))}</div>` : ""}
       <label class="f">${esc(t("notes"))}<textarea name="notes">${esc(v.notes || "")}</textarea></label>
@@ -419,6 +439,9 @@ async function viewVoter(serial) {
   `;
 
   $("#fuClear").addEventListener("click", () => { $("#campForm").follow_up_on.value = ""; });
+  const cf = $("#campForm");
+  cf.needs_transport.addEventListener("change", () => { if ($("#vehBox")) $("#vehBox").hidden = !cf.needs_transport.checked && !cf.vehicle_id.value; });
+  cf.away.addEventListener("change", () => { if ($("#awayBox")) $("#awayBox").hidden = !cf.away.checked; });
   const houseUpdate = async (patch) => {
     const { error } = await sb.from("voters").update(patch).eq("hamlet_id", v.hamlet_id).eq("house_no", v.house_no);
     if (error) return fail(error);
@@ -454,6 +477,11 @@ async function viewVoter(serial) {
     if (f.assigned_to) patch.assigned_to = f.assigned_to.value || null;
     patch.slip_delivered = f.slip_delivered.checked;
     patch.follow_up_on = f.follow_up_on.value || null;
+    if (hasTransport) {
+      patch.vehicle_id = f.vehicle_id.value ? Number(f.vehicle_id.value) : null;
+      patch.away_place = f.away_place.value.trim() || null;
+      patch.travel_plan = f.travel_plan.value;
+    }
     const { error } = await sb.from("voters").update(patch).eq("serial", v.serial);
     if (error) return fail(error);
     toast(t("saved"));
@@ -500,6 +528,8 @@ function describe(h) {
     if (k === "assigned_to") return `${t("assigned")}: ${personName(val) || t("nobody")}`;
     if (typeof val === "boolean") return `${t(k === "needs_transport" ? "st_transport" : k === "away" ? "st_away" : k === "slip_delivered" ? "slip" : k)}: ${val ? "✓" : "✗"}`;
     if (k === "follow_up_on") return `${t("follow_up")}: ${val ?? "—"}`;
+    if (k === "vehicle_id") return `🚗 ${t("vehicle")}: ${vehicleName(val) || t("not_booked")}`;
+    if (k === "travel_plan") return `${t("travel_plan")}: ${t("tp_" + val)}`;
     return `${t(k === "house_no" ? "house" : k)}: ${val ?? "—"}`;
   }).join(", ");
 }
@@ -604,6 +634,7 @@ async function viewDash() {
         ${LEANINGS.map((l) => `<span><span class="chip ${l}">${esc(t("lean_" + l))}</span> ${T[l]}</span>`).join("")}
         <span>🚗 ${T.transport}</span><span>✈ ${T.away}</span>
       </div>
+      ${hasTransport ? `<a class="btn" style="margin-top:10px;width:100%" href="#/transport">🚗 ${esc(t("transport_plan"))} →</a>` : ""}
       <h2>${esc(t("by_hamlet"))}</h2>
       <div class="tablewrap"><table>
         <thead><tr><th>${esc(t("hamlet"))}</th><th>${esc(t("total"))}</th><th>${esc(t("contacted_pct"))}</th><th>${esc(t("lean_strong"))}</th><th>${esc(t("lean_leaning"))}</th><th>${esc(t("lean_undecided"))}</th><th>${esc(t("lean_opposed"))}</th><th>🎯 ${esc(t("target"))}</th><th>🧾</th><th>📅</th><th>${esc(t("turnout"))}</th><th>${esc(t("ours_voted"))}</th></tr></thead>
@@ -749,6 +780,164 @@ async function viewTeam() {
   }));
 }
 
+// ───────── outstation voters & poll-day transport ─────────
+async function fetchAll(build) {
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build().order("serial").range(from, from + 999);
+    if (error) throw error;
+    rows.push(...data);
+    if (data.length < 1000) break;
+  }
+  return rows;
+}
+
+async function viewTransport() {
+  setTab("dash");
+  main.innerHTML = `<p class="center muted">…</p>`;
+  let away, riders;
+  try {
+    await loadVehicles();
+    [away, riders] = await Promise.all([
+      fetchAll(() => sb.from("voters").select(VOTER_COLS).eq("away", true)),
+      fetchAll(() => sb.from("voters").select(VOTER_COLS).eq("needs_transport", true)),
+    ]);
+  } catch (e) { return fail(e); }
+  const booked = (id) => riders.filter((r) => r.vehicle_id === id).length;
+  const unbooked = riders.filter((r) => !r.vehicle_id && !r.voted);
+  const plan = Object.fromEntries(TRAVEL.map((x) => [x, away.filter((v) => v.travel_plan === x)]));
+  const planFilter = store.get("tpFilter", "");
+  const awayShown = planFilter ? plan[planFilter] : away;
+  const vOpts = vehicles.map((x) => `<option value="${x.id}">${esc(x.label)} (${booked(x.id)}${x.capacity ? "/" + x.capacity : ""})</option>`).join("");
+  const line = (v, extra = "") => `<li class="vitem" style="align-items:flex-start">
+      <div class="main"><a href="#/v/${v.serial}" style="text-decoration:none;color:inherit">
+        <div class="nm"><span class="sn">${v.serial}</span> ${esc(v.name)}</div>
+        <div class="sub">🏠 ${esc(v.house_no || "—")} · ${esc(hamletName(v.hamlet_id))}${v.away_place ? " · 📍 " + esc(v.away_place) : ""}</div></a>
+        ${v.phone ? `<a class="small" href="tel:${esc(v.phone.replace(/[^\d+]/g, ""))}">📞 ${esc(v.phone)}</a>` : `<span class="small muted">${esc(t("no_phone"))}</span>`}
+      </div>
+      <div class="side">${v.voted ? `<span class="chip voted">✓ ${esc(t("st_voted"))}</span>` : ""}${extra}</div></li>`;
+
+  main.innerHTML = `
+    <div class="row" style="margin-bottom:8px"><a class="btn small" href="#/dash">← ${esc(t("back"))}</a></div>
+    <h1>🚗 ${esc(t("transport_plan"))}</h1>
+    <div class="stat-grid">
+      <div class="stat"><div class="n">${riders.length}</div><div class="l">🚗 ${esc(t("st_transport"))}</div></div>
+      <div class="stat"><div class="n" style="color:${unbooked.length ? "var(--danger)" : "var(--strong)"}">${unbooked.length}</div><div class="l">${esc(t("st_ride_unbooked"))}</div></div>
+      <div class="stat"><div class="n">${away.length}</div><div class="l">✈ ${esc(t("st_away"))}</div></div>
+      <div class="stat"><div class="n" style="color:var(--strong)">${plan.coming.length}</div><div class="l">${esc(t("tp_coming"))} · ${esc(t("tp_needs_help"))}: ${plan.needs_help.length}</div></div>
+    </div>
+
+    <h2>${esc(t("vehicles"))}</h2>
+    ${vehicles.length ? `<ul class="vlist">${vehicles.map((x) => `<li class="vitem">
+      <div class="main"><div class="nm">🚗 ${esc(x.label)}${x.hamlet_id ? ` <span class="small muted">· ${esc(hamletName(x.hamlet_id))}</span>` : ""}</div>
+        <div class="sub">${esc(x.driver_name || "—")}${x.driver_phone ? ` · <a href="tel:${esc(x.driver_phone.replace(/[^\d+]/g, ""))}">📞 ${esc(x.driver_phone)}</a>` : ""}</div>
+        ${x.notes ? `<div class="sub">${esc(x.notes)}</div>` : ""}</div>
+      <div class="side"><span class="chip ${x.capacity && booked(x.id) > x.capacity ? "opposed" : ""}">👥 ${booked(x.id)}${x.capacity ? "/" + x.capacity : ""}</span>
+        <div class="row" style="gap:4px"><a class="btn small" style="min-height:32px;padding:4px 10px;font-size:13px" href="#/transport/${x.id}">📋 ${esc(t("roster"))}</a>
+        ${canTransport() ? `<button class="small" data-editveh="${x.id}">✎</button>` : ""}</div></div></li>`).join("")}</ul>`
+      : `<p class="small muted">${esc(t("no_vehicles"))}</p>`}
+    ${canTransport() ? `<details class="card" id="vehDetails"><summary id="vehSummary">➕ ${esc(t("add_vehicle"))}</summary>
+      <form class="stack" id="vehForm" style="margin-top:10px">
+        <input type="hidden" name="id">
+        <label class="f">${esc(t("vehicle_label"))}<input name="label" required placeholder="${esc(t("vehicle_label_ph"))}"></label>
+        <div class="row">
+          <label class="f grow">${esc(t("driver"))}<input name="driver_name"></label>
+          <label class="f grow">${esc(t("phone"))}<input name="driver_phone" type="tel" inputmode="tel"></label>
+        </div>
+        <div class="row">
+          <label class="f grow">${esc(t("capacity"))}<input name="capacity" type="number" min="1" max="60"></label>
+          <label class="f grow">${esc(t("hamlet"))}<select name="hamlet_id"><option value="">${esc(t("all_hamlets"))}</option>${hamlets.map((h) => `<option value="${h.id}">${esc(hamletName(h.id))}</option>`).join("")}</select></label>
+        </div>
+        <label class="f">${esc(t("notes"))}<input name="notes" placeholder="${esc(t("vehicle_notes_ph"))}"></label>
+        <div class="row"><button class="primary grow" type="submit">${esc(t("save"))}</button><button type="button" class="danger" id="vehDelete" hidden>${esc(t("delete"))}</button></div>
+      </form></details>` : ""}
+
+    <h2>${esc(t("st_ride_unbooked"))} (${unbooked.length})</h2>
+    ${unbooked.length ? `<ul class="vlist" id="unbookedList">${unbooked.map((v) => line(v, vehicles.length && canTransport()
+      ? `<select data-book="${v.serial}" style="min-height:36px;font-size:13px;width:auto;max-width:150px"><option value="">${esc(t("book"))}…</option>${vOpts}</select>` : "")).join("")}</ul>`
+      : `<p class="small muted">✓ ${esc(t("all_booked"))}</p>`}
+
+    <h2>✈ ${esc(t("st_away"))} (${away.length})</h2>
+    <div class="row small" style="gap:6px;margin-bottom:8px">
+      ${["", ...TRAVEL].map((x) => `<button class="small ${planFilter === x ? "primary" : ""}" data-tp="${x}">${esc(x ? t("tp_" + x) : t("all_status"))} (${x ? plan[x].length : away.length})</button>`).join("")}
+    </div>
+    ${awayShown.length ? `<ul class="vlist">${awayShown.map((v) => line(v, `<span class="chip ${{ coming: "strong", needs_help: "undecided", not_coming: "opposed" }[v.travel_plan] || ""}">${esc(t("tp_" + v.travel_plan))}</span>${leanChip(v.leaning)}`)).join("")}</ul>`
+      : `<p class="small muted">${esc(t("no_results"))}</p>`}
+    <p class="small muted">${esc(t("away_help"))}</p>`;
+
+  $$("[data-tp]").forEach((b) => b.addEventListener("click", () => { store.set("tpFilter", b.dataset.tp); viewTransport(); }));
+  $("#unbookedList")?.addEventListener("change", async (e) => {
+    const sel = e.target.closest("[data-book]");
+    if (!sel || !sel.value) return;
+    const { error } = await sb.from("voters").update({ vehicle_id: Number(sel.value) }).eq("serial", Number(sel.dataset.book));
+    if (error) return fail(error);
+    toast(`${sel.dataset.book} → ${vehicleName(Number(sel.value))}`);
+    viewTransport();
+  });
+  const vf = $("#vehForm");
+  if (!vf) return;
+  main.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-editveh]");
+    if (!b) return;
+    const x = vehicles.find((y) => y.id === Number(b.dataset.editveh));
+    for (const k of ["id", "label", "driver_name", "driver_phone", "capacity", "hamlet_id", "notes"]) vf[k].value = x[k] ?? "";
+    $("#vehSummary").textContent = `✎ ${x.label}`;
+    $("#vehDelete").hidden = false;
+    $("#vehDetails").open = true;
+    $("#vehDetails").scrollIntoView({ behavior: "smooth" });
+  });
+  vf.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const row = {
+      label: vf.label.value.trim(), driver_name: vf.driver_name.value.trim() || null, driver_phone: vf.driver_phone.value.trim() || null,
+      capacity: vf.capacity.value ? Number(vf.capacity.value) : null, hamlet_id: vf.hamlet_id.value ? Number(vf.hamlet_id.value) : null,
+      notes: vf.notes.value.trim() || null,
+    };
+    const { error } = vf.id.value
+      ? await sb.from("vehicles").update(row).eq("id", Number(vf.id.value))
+      : await sb.from("vehicles").insert(row);
+    if (error) return fail(error);
+    toast(t("saved"));
+    viewTransport();
+  });
+  $("#vehDelete").addEventListener("click", async () => {
+    const id = Number(vf.id.value);
+    if (!id || !confirm(`${t("delete")} ${vehicleName(id)}? ${booked(id)} ${t("riders_unbooked")}`)) return;
+    const { error } = await sb.from("vehicles").delete().eq("id", id);
+    if (error) return fail(error);
+    toast(t("saved"));
+    viewTransport();
+  });
+}
+
+// Printable list of who one vehicle picks up, house by house.
+async function viewRoster(id) {
+  setTab("dash");
+  main.innerHTML = `<p class="center muted">…</p>`;
+  let rows;
+  try {
+    await loadVehicles();
+    rows = await fetchAll(() => sb.from("voters").select(VOTER_COLS).eq("vehicle_id", id));
+  } catch (e) { return fail(e); }
+  const x = vehicles.find((y) => y.id === id);
+  if (!x) { main.innerHTML = `<p class="empty">${esc(t("no_results"))}</p>`; return; }
+  rows.sort((a, b) => a.hamlet_id - b.hamlet_id || String(a.house_no).localeCompare(String(b.house_no), "en", { numeric: true }) || a.serial - b.serial);
+  main.innerHTML = `
+    <div class="noprint row" style="justify-content:space-between;margin-bottom:10px">
+      <a class="btn small" href="#/transport">← ${esc(t("back"))}</a>
+      <button class="primary" onclick="window.print()">🖨 ${esc(t("print"))}</button>
+    </div>
+    <h1>🚗 ${esc(x.label)} · ${esc(t("roster"))}</h1>
+    <p class="small">${esc(x.driver_name || "")}${x.driver_phone ? " · 📞 " + esc(x.driver_phone) : ""}${x.hamlet_id ? " · " + esc(hamletName(x.hamlet_id)) : ""} · 👥 ${rows.length}${x.capacity ? "/" + x.capacity : ""}${x.notes ? " · " + esc(x.notes) : ""}</p>
+    <div class="tablewrap"><table class="walk">
+      <thead><tr><th>#</th><th>${esc(t("hamlet"))}</th><th>🏠</th><th>${esc(t("name"))}</th><th>${esc(t("age"))}</th><th>${esc(t("phone"))}</th><th>${esc(t("picked_up"))}</th><th>${esc(t("st_voted"))}</th></tr></thead>
+      <tbody>${rows.map((v) => `<tr><td>${v.serial}</td><td>${esc(hamletName(v.hamlet_id))}</td><td>${esc(v.house_no || "")}</td>
+        <td><a href="#/v/${v.serial}" style="color:inherit;text-decoration:none"><b>${esc(v.name)}</b></a><div class="pm">${esc(t("rel_" + (v.relation_type || "other")))}: ${esc(v.relation_name || "")}</div></td>
+        <td>${esc(v.age ?? "")}${v.gender ? " " + v.gender : ""}</td><td>${esc(v.phone || "")}</td><td class="c">☐</td><td class="c">${v.voted ? "☑" : "☐"}</td></tr>`).join("")
+        || `<tr><td colspan="8">${esc(t("no_results"))}</td></tr>`}</tbody>
+    </table></div>`;
+}
+
 // ───────── router & boot ─────────
 function route() {
   if (!me) return;
@@ -761,6 +950,9 @@ function route() {
   if (h.startsWith("/dash")) return viewDash();
   if (h.startsWith("/team")) return viewTeam();
   if (h.startsWith("/print")) return viewPrint();
+  const rm = h.match(/^\/transport\/(\d+)/);
+  if (rm && hasTransport) return viewRoster(Number(rm[1]));
+  if (h.startsWith("/transport") && hasTransport) return viewTransport();
   return viewSearch();
 }
 window.addEventListener("hashchange", route);
@@ -782,7 +974,11 @@ async function boot() {
     return viewLogin(error ? t("err") : t("no_profile"));
   }
   me = prof;
-  const [{ data: hs }] = await Promise.all([sb.from("hamlets").select("*").order("id"), loadTeam()]);
+  const [{ data: hs }, , { error: vErr }] = await Promise.all([sb.from("hamlets").select("*").order("id"), loadTeam(),
+    sb.from("vehicles").select("id").limit(1)]);
+  hasTransport = !vErr;
+  VOTER_COLS = hasTransport ? BASE_COLS + ",away_place,travel_plan,vehicle_id" : BASE_COLS;
+  await loadVehicles();
   hamlets = hs || [];
   $("#who").textContent = me.full_name || me.username;
   $("#logoutBtn").hidden = false;
