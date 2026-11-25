@@ -62,6 +62,7 @@ const ICONS = {
   cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   users: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-4-6"/>',
   userplus: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 11h6M19 8v6"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/>',
   chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   phone: '<path d="M5 3h4l2 5-3 2a12 12 0 0 0 6 6l2-3 5 2v4a2 2 0 0 1-2 2A18 18 0 0 1 3 5a2 2 0 0 1 2-2z"/>',
   check: '<path d="M4 12l5 5L20 6"/>',
@@ -1093,7 +1094,7 @@ async function viewReports() {
   const opt = (val, label, cur) => `<option value="${esc(val)}" ${String(cur) === String(val) ? "selected" : ""}>${esc(label)}</option>`;
   main.innerHTML = loading;
   const draw = async () => {
-    if (!location.hash.startsWith("#/reports") && !location.hash.startsWith("#/dash")) return;
+    if (!location.hash.startsWith("#/reports") && location.hash !== "#/dash") return;
     const hf = store.get("repHamlet", "");
     const [{ data: all, error }, { data: a }] = await Promise.all([sb.rpc("hamlet_stats"), sb.rpc("assignment_stats")]);
     if (error) return fail(error);
@@ -1139,7 +1140,7 @@ async function viewReports() {
       <h2>${esc(t("tools"))}${subIn("tools")}</h2>
       <div class="card flat">
         ${hasTransport ? `<a class="task" href="#/transport"><span class="tile">${icon("car")}</span><span class="grow"><b>${esc(t("transport_plan"))}</b>${sub("transport_plan")}</span>${icon("chev")}</a>` : ""}
-        ${isAdmin() ? `<a class="task" href="#/analysis"><span class="tile">${icon("chart")}</span><span class="grow"><b>${esc(t("analysis"))}</b><span class="en">${esc(STRINGS.en.analysis_sub)}</span></span>${icon("chev")}</a>` : ""}
+        ${isAdmin() ? `<a class="task" href="#/dashboard"><span class="tile">${icon("chart")}</span><span class="grow"><b>${esc(t("analysis"))}</b><span class="en">${esc(STRINGS.en.analysis_sub)}</span></span>${icon("chev")}</a>` : ""}
         <a class="task" href="#/activity"><span class="tile">${icon("clock")}</span><span class="grow"><b>${esc(t("updates_title"))}</b>${sub("updates_title")}</span>${icon("chev")}</a>
         <a class="task" href="#/print"><span class="tile">${icon("print")}</span><span class="grow"><b>${esc(t("walk_list"))}</b>${sub("walk_list")}</span>${icon("chev")}</a>
       </div>
@@ -1496,15 +1497,28 @@ const supOrder = () => ["strong", "leaning", "undecided", ...(hasUnlikely ? ["un
 const miniStack = (s, h = 14) => `<div class="stackbar" style="height:${h}px">${supOrder().map((l) => s[l] ? `<span style="width:${(s[l] / s.n) * 100}%;background:${SUP_COLOR[l]}" title="${esc(t("lean_" + l))}: ${s[l]}"></span>` : "").join("")}</div>`;
 const goAttr = (patch) => `data-go="${esc(JSON.stringify(patch))}"`;
 
-async function viewAnalytics() {
-  setTab("reports");
+const DASH_TABS = [
+  ["overview", "Overview", "సారాంశం"], ["people", "Women, men & age", "మహిళలు, పురుషులు, వయసు"], ["hamlets", "Hamlets", "గ్రామాలు"],
+  ["houses", "Households", "ఇళ్ళు"], ["reach", "Who to reach", "ఎవరిని చేరుకోవాలి"], ["team", "Team progress", "టీమ్ పురోగతి"],
+];
+let dashCache = null; // { at, all, team }
+async function viewAnalytics(tab = "overview", fresh = false) {
+  if (!DASH_TABS.some(([k]) => k === tab)) tab = "overview";
+  setTab("dashboard");
   main.classList.add("wide");
-  if (!isAdmin()) { main.innerHTML = `<p class="card">${esc(t("no_access") || "Only admins can see this page.")}</p>`; return; }
-  main.innerHTML = loading;
-  let all;
-  try {
-    all = await fetchAll(() => sb.from("voters").select("serial,hamlet_id,gender,age,house_no,leaning,contacted,follow_up_on,away,voted,assigned_to,slip_delivered"));
-  } catch (err) { main.innerHTML = ""; return fail(err); }
+  if (!isAdmin()) { main.innerHTML = `<p class="card">${esc(t("no_access"))}</p>`; return; }
+  if (fresh || !dashCache || Date.now() - dashCache.at > 60000) {
+    if (!dashCache) main.innerHTML = loading;
+    try {
+      const [all, { data: team }] = await Promise.all([
+        fetchAll(() => sb.from("voters").select("serial,hamlet_id,gender,age,house_no,leaning,contacted,follow_up_on,away,voted,assigned_to,slip_delivered")),
+        sb.rpc("assignment_stats"),
+      ]);
+      dashCache = { at: Date.now(), all, team: team || [] };
+    } catch (err) { main.innerHTML = ""; return fail(err); }
+  }
+  if (location.hash && !/^#\/(dashboard|analysis)/.test(location.hash)) return;
+  const { all, team } = dashCache;
   const hf = store.get("anHamlet", "");
   const rows = hf ? all.filter((v) => String(v.hamlet_id) === String(hf)) : all;
   const S = summarize(rows);
@@ -1598,16 +1612,8 @@ async function viewAnalytics() {
       <a href="#/voters" ${goAttr(go)} class="small">${esc(t("view_list"))} →</a>
     </div>`;
 
-  main.innerHTML = `
-    <div class="row between an-head">
-      <h1 style="margin:0">${L("Voter analysis", "ఓటర్ల విశ్లేషణ")}</h1>
-      <div class="row" style="gap:8px">
-        <select id="anHamlet" style="width:auto">${opt("", t("all_hamlets"), hf)}${hamlets.map((h) => opt(h.id, hamletName(h.id), hf)).join("")}</select>
-        <button type="button" id="anPrint" class="noprint">${icon("print", "width:18px;height:18px")} ${esc(t("print") || "Print")}</button>
-      </div>
-    </div>
-
-    <div class="kpis">
+  const sec = {
+    kpis: `    <div class="kpis">
       ${tile(nf(S.n), "Voters", "ఓటర్లు", `${nf(houses.size)} households`)}
       ${tile(pct(W.n, S.n) + "%", "Women", "మహిళలు", `${nf(W.n)} women · ${nf(M.n)} men`)}
       ${tile(avgAge, "Average age", "సగటు వయసు", `${nf(rows.filter((v) => v.age <= 29).length)} under 30`)}
@@ -1616,15 +1622,17 @@ async function viewAnalytics() {
       ${tile(nf(S.persu), "Still open", "ఇంకా తేలని వారు", "50-50, Unlikely or not known")}
     </div>
 
-    ${ins.length ? `<div class="card insights"><b>${L("What the numbers say", "సంఖ్యలు ఏం చెబుతున్నాయి")}</b><ul>${ins.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
+`,
+    insights: `    ${ins.length ? `<div class="card insights"><b>${L("What the numbers say", "సంఖ్యలు ఏం చెబుతున్నాయి")}</b><ul>${ins.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""}
 
-    <div class="an-grid">
-      <section class="card">
+`,
+    gender: `      <section class="card">
         <h2>${L("Women and men", "మహిళలు, పురుషులు")}</h2>
         <div class="g2">${genderCol("Women", "మహిళలు", W, "c-f", { gender: "F" })}${genderCol("Men", "పురుషులు", M, "c-m", { gender: "M" })}</div>
       </section>
 
-      <section class="card">
+`,
+    pyramid: `      <section class="card">
         <h2>${L("Age groups", "వయసు వారీగా")} <span class="en in">women left, men right</span></h2>
         <div class="pyr">
           ${bands.map((b) => `<a class="pyr-row" href="#/voters" ${goAttr({ age: b.k })}>
@@ -1633,9 +1641,8 @@ async function viewAnalytics() {
             <span class="bar"><i class="m" style="width:${(b.M.n / maxBand) * 100}%"></i></span><span class="num">${nf(b.M.n)}</span></a>`).join("")}
         </div>
       </section>
-    </div>
-
-    <section class="card" style="margin-top:12px">
+`,
+    agetable: `    <section class="card" style="margin-top:12px">
       <h2>${L("Support by age group", "వయసు వారీగా మద్దతు")}</h2>
       <div class="tablewrap flat"><table class="an">
         <thead><tr><th>Age</th><th class="n">Voters</th><th class="n">% of roll</th><th class="n">Visited</th><th style="min-width:180px">Support</th><th class="n">Sure+Likely</th><th class="n">50-50</th><th class="n">Expected</th></tr></thead>
@@ -1643,7 +1650,8 @@ async function viewAnalytics() {
       </table></div>
     </section>
 
-    ${hf ? "" : `<section class="card" style="margin-top:12px">
+`,
+    hamtable: `<section class="card" style="margin-top:12px">
       <h2>${L("Hamlets", "గ్రామాలు")} <span class="en in">sorted by voters still open</span></h2>
       <div class="tablewrap flat"><table class="an">
         <thead><tr><th>Hamlet</th><th class="n">Voters</th><th class="n">Women</th><th class="n">18–29</th><th class="n">60+</th><th class="n">Visited</th><th style="min-width:160px">Support</th><th class="n">Expected</th><th class="n">Target</th><th class="n">Still open</th><th class="n">Not assigned</th><th class="n">Away</th></tr></thead>
@@ -1657,9 +1665,8 @@ async function viewAnalytics() {
           <td class="n"><span class="pbar"><i style="width:${(r.s.persu / maxPersu) * 100}%"></i></span>${nf(r.s.persu)}</td>
           <td class="n ${r.unassigned ? "bad" : ""}">${nf(r.unassigned)}</td><td class="n">${nf(r.s.away)}</td></tr>`).join("")}</tbody>
       </table></div>
-    </section>`}
-
-    <div class="an-grid" style="margin-top:12px">
+    </section>`,
+    houses: `    <div class="an-grid" style="margin-top:12px">
       <section class="card">
         <h2>${L("Household size", "ఇంటికి ఎంత మంది ఓటర్లు")}</h2>
         <p class="small muted" style="margin-top:0">Voters living in houses of each size. Bigger houses give more votes per visit.</p>
@@ -1674,7 +1681,8 @@ async function viewAnalytics() {
       </section>
     </div>
 
-    <h2 style="margin-top:24px">${L("Who to reach, and how", "ఎవరిని, ఎలా చేరుకోవాలి")}</h2>
+`,
+    reach: `    <h2 style="margin-top:4px">${L("Who to reach, and how", "ఎవరిని, ఎలా చేరుకోవాలి")}</h2>
     <div class="segs-grid">
       ${segments.map((g) => `<section class="card seg">
         <div class="row between" style="align-items:flex-start"><b>${L(g.en, g.te)}</b><span class="num big2">${nf(g.s.n)}</span></div>
@@ -1686,20 +1694,57 @@ async function viewAnalytics() {
       </section>`).join("")}
     </div>
 
-    <div class="card rules">
+`,
+    rules: `    <div class="card rules">
       <b>${L("Stay within the election rules", "ఎన్నికల నియమాలు పాటించండి")}</b>
       <p class="small" style="margin:6px 0 0">Win votes with issues, respect and repeated contact. Offering cash, gifts, liquor, free travel or any other inducement, or threatening anyone, is a crime under the election law and can cancel the election. Follow the State Election Commission's code of conduct for meetings, campaign times and the silence period before polling.</p>
     </div>
-    <p class="small muted center">${esc(t("refreshed"))}: ${esc(fmtTime(new Date().toISOString()))}</p>`;
+`,
+    support: `<section class="card"><h2>${L("Support", "మద్దతు")} <span class="en in">${nf(S.n)} voters</span></h2>
+      ${miniStack(S, 22)}
+      <div class="legend">${supOrder().map((l) => `<a href="#/voters" ${goAttr({ lean: l === "unknown" ? "unknown" : l })} style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:6px"><i style="background:${SUP_COLOR[l]}"></i>${esc(t("lean_" + l))}<b>${nf(S[l])}</b></a>`).join("")}</div>
+      <div class="small muted" style="margin-top:10px">Follow-ups due: <b>${nf(S.due)}</b> · Slips: <b>${pct(rows.filter((v) => v.slip_delivered).length, S.n)}%</b> · Voted: <b>${nf(S.voted)}</b></div></section>`,
+    topHamlets: `<section class="card"><h2>${L("Hamlets to focus on", "దృష్టి పెట్టాల్సిన గ్రామాలు")}</h2>
+      <div class="tablewrap flat"><table class="an"><thead><tr><th>Hamlet</th><th class="n">Visited</th><th class="n">Expected</th><th class="n">Target</th><th class="n">Still open</th></tr></thead><tbody>
+      ${[...hamRows].filter((r) => r.s.n).sort((a, b) => ((b.target - b.s.exp) || 0) - ((a.target - a.s.exp) || 0) || b.s.persu - a.s.persu).slice(0, 5).map((r) => `<tr><td><a href="#/voters" ${goAttr({ hamlet: String(r.h.id) })}>${esc(hamletName(r.h.id))}</a></td><td class="n"><span class="heat" style="--p:${pct(r.s.visited, r.s.n)}">${pct(r.s.visited, r.s.n)}%</span></td><td class="n">${nf(Math.round(r.s.exp))}</td><td class="n ${r.target && r.s.exp < r.target ? "bad" : r.target ? "ok" : ""}">${r.target ? nf(r.target) : "—"}</td><td class="n">${nf(r.s.persu)}</td></tr>`).join("")}
+      </tbody></table></div><a class="small" href="#/dashboard/hamlets">All hamlets →</a></section>`,
+    team: `<section class="card"><h2>${L("Team progress", "టీమ్ పురోగతి")}</h2>
+      ${team.length ? `<div class="tablewrap flat"><table class="an"><thead><tr><th>Person</th><th class="n">Assigned</th><th class="n">Visited</th><th style="min-width:140px"></th><th class="n">With us</th><th class="n">Slips</th><th class="n">Follow-ups due</th><th class="n">Voted</th><th></th></tr></thead><tbody>
+      ${[...team].sort((a, b) => pct(a.contacted, a.assigned) - pct(b.contacted, b.assigned)).map((r) => `<tr><td>${esc(r.full_name)}</td><td class="n">${nf(r.assigned)}</td><td class="n">${pct(r.contacted, r.assigned)}%</td><td><span class="pbar wide"><i style="width:${pct(r.contacted, r.assigned)}%;background:var(--brand)"></i></span></td><td class="n">${nf(r.ours)}</td><td class="n">${pct(r.slips, r.assigned)}%</td><td class="n ${r.follow_ups_due ? "bad" : ""}">${nf(r.follow_ups_due)}</td><td class="n">${nf(r.voted)}</td><td><a class="small" href="#/activity?u=${esc(r.user_id)}">Updates →</a></td></tr>`).join("")}
+      </tbody></table></div>` : `<p class="muted">No voters assigned yet. Assign voters from the Team page.</p>`}
+      <div class="row" style="gap:12px;margin-top:10px"><a class="small" href="#/team">Manage team →</a><a class="small" href="#/activity">All updates →</a></div></section>`,
+  };
+  const body = {
+    overview: `${sec.kpis}${sec.insights}<div class="an-grid">${sec.support}${sec.topHamlets}</div><div class="an-grid">${sec.gender}${sec.pyramid}</div>`,
+    people: `<div class="an-grid" style="margin-top:0">${sec.gender}${sec.pyramid}</div>${sec.agetable}`,
+    hamlets: hf ? `<p class="card">Choose "All hamlets" above to compare hamlets.</p>` : sec.hamtable.replace('style="margin-top:12px"', ""),
+    houses: sec.houses.replace('style="margin-top:12px"', 'style="margin-top:0"'),
+    reach: sec.reach + sec.rules,
+    team: sec.team,
+  }[tab];
 
-  $("#anHamlet").addEventListener("change", (e) => { store.set("anHamlet", e.target.value); viewAnalytics(); });
+  main.innerHTML = `
+    <div class="row between an-head">
+      <h1 style="margin:0">${L("Dashboard", "డాష్‌బోర్డ్")}</h1>
+      <div class="row" style="gap:8px">
+        <select id="anHamlet" style="width:auto">${opt("", t("all_hamlets"), hf)}${hamlets.map((h) => opt(h.id, hamletName(h.id), hf)).join("")}</select>
+        <button type="button" id="anRefresh" class="noprint" title="Refresh">${icon("refresh", "width:18px;height:18px")}</button>
+        <button type="button" id="anPrint" class="noprint">${icon("print", "width:18px;height:18px")} ${esc(t("print"))}</button>
+      </div>
+    </div>
+    <nav class="dtabs noprint" aria-label="Dashboard sections">${DASH_TABS.map(([k, en, te]) => `<a href="#/dashboard/${k}" class="${k === tab ? "on" : ""}">${lang === "te" ? esc(te) : esc(en)}</a>`).join("")}</nav>
+    <div class="dbody">${body}</div>
+    <p class="small muted center">${esc(t("refreshed"))}: ${esc(fmtTime(new Date(dashCache.at).toISOString()))}</p>`;
+
+  $("#anHamlet").addEventListener("change", (e) => { store.set("anHamlet", e.target.value); viewAnalytics(tab); });
+  $("#anRefresh").addEventListener("click", () => viewAnalytics(tab, true));
   $("#anPrint").addEventListener("click", () => window.print());
 }
 
 // ───────── router & boot ─────────
 function route() {
   if (!me) return;
-  if (dashChannel && !/^#\/(reports|dash)/.test(location.hash)) { sb.removeChannel(dashChannel); dashChannel = null; }
+  if (dashChannel && !/^#\/(reports|dash$)/.test(location.hash)) { sb.removeChannel(dashChannel); dashChannel = null; }
   const full = location.hash.replace(/^#/, "") || "/";
   const [h, params = ""] = full.split("?");
   window.scrollTo(0, 0);
@@ -1708,8 +1753,10 @@ function route() {
   if (h.startsWith("/voters")) return viewSearch(params);
   if (h.startsWith("/follow")) return viewFollow();
   if (h.startsWith("/poll")) return viewPoll();
-  if (h.startsWith("/reports") || h.startsWith("/dash")) return viewReports();
-  if (h.startsWith("/analysis")) return viewAnalytics();
+  if (h.startsWith("/reports") || h === "/dash") return viewReports();
+  m = h.match(/^\/(?:dashboard|analysis)(?:\/(\w+))?/);
+  if (m) return viewAnalytics(m[1]);
+  if (!location.hash && isAdmin() && matchMedia("(min-width: 1000px)").matches) return viewAnalytics();
   m = h.match(/^\/team\/(new|p\/([\w-]+))/);
   if (m) return viewPerson(m[2] || "new");
   if (h.startsWith("/team")) return viewTeam();
@@ -1753,6 +1800,7 @@ async function boot() {
   $("#logoutBtn").hidden = false;
   $("#tabs").hidden = false;
   $$("#tabs [data-mgr]").forEach((a) => (a.hidden = !canAssign()));
+  $$("#tabs [data-admin]").forEach((a) => (a.hidden = !isAdmin()));
   route();
 }
 boot();

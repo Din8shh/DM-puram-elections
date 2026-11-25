@@ -68,6 +68,14 @@ table.an td.bad { color: var(--late); font-weight: 600; } table.an td.ok { color
 .seg { display: flex; flex-direction: column; gap: 6px; }
 .seg .ideas { margin: 0 0 6px; padding-left: 18px; } .seg .ideas li { margin: 3px 0; }
 .seg a { margin-top: auto; }
+.dtabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 0 0 14px; overflow-x: auto; scrollbar-width: none; }
+.dtabs a { flex: none; padding: 10px 14px; text-decoration: none; color: var(--muted); font-weight: 600; font-size: 14px; border-bottom: 3px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.dtabs a.on { color: var(--brand); border-bottom-color: var(--brand); }
+.dtabs a:hover { color: var(--ink, #1C2321); }
+.dbody > .an-grid:first-child { margin-top: 0; }
+.dbody > .kpis + .insights, .dbody > .kpis + .an-grid { margin-top: 12px; }
+.pbar.wide { width: 140px; }
+.desk-only { display: none !important; }
 .rules { margin-top: 12px; background: #FBF3DC; border-color: #EBD9A0; }
 @media (max-width: 1000px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .segs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .an-grid, .segs-grid, .g2 { grid-template-columns: 1fr; } }
@@ -349,4 +357,21 @@ table.walk td:last-child { min-width: 90px; width: 22%; }
   table.walk { font-size: 11px; }
   table.walk tr { break-inside: avoid; }
   table.walk thead { display: table-header-group; }
+}
+
+/* laptop: menu on the left */
+@media screen and (min-width: 1000px) {
+  body:has(#tabs:not([hidden])) { padding-left: 220px; }
+  body:has(#tabs:not([hidden])) header#top { margin-left: -220px; padding-left: 24px; border-bottom: 1px solid var(--line); background: var(--card); }
+  nav#tabs { top: 53px; bottom: 0; right: auto; width: 220px; flex-direction: column; justify-content: flex-start; gap: 2px; padding: 12px 10px;
+    border-top: 0; border-right: 1px solid var(--line); }
+  nav#tabs a { flex: none; flex-direction: row; justify-content: flex-start; gap: 12px; height: 46px; padding: 0 14px; border-radius: 10px; font-size: 15px; }
+  nav#tabs a small { display: none; }
+  nav#tabs a.on { background: #E8F0EB; }
+  nav#tabs a:hover:not(.on) { background: #F1EEE6; }
+  nav#tabs svg { width: 20px; height: 20px; margin: 0; }
+  nav#tabs a.desk-only:not([hidden]) { display: flex !important; }
+  main { padding-bottom: 40px; }
+  main.has-bar { padding-bottom: 120px; }
+  .actionbar { left: 220px; bottom: 0; }
 }
