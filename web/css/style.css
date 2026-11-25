@@ -359,6 +359,10 @@ table.walk td:last-child { min-width: 90px; width: 22%; }
   table.walk thead { display: table-header-group; }
 }
 
+.cols > div > :first-child { margin-top: 0; }
+.cols > .col-b { margin-top: 12px; }
+.cardgrid > .empty { grid-column: 1 / -1; }
+
 /* laptop: menu on the left */
 @media screen and (min-width: 1000px) {
   body:has(#tabs:not([hidden])) { padding-left: 220px; }
@@ -374,4 +378,35 @@ table.walk td:last-child { min-width: 90px; width: 22%; }
   main { padding-bottom: 40px; }
   main.has-bar { padding-bottom: 120px; }
   .actionbar { left: 220px; bottom: 0; }
+  /* every screen gets room to breathe on a laptop */
+  main { max-width: 1180px; padding: 20px 32px 40px; }
+  main.has-bar { padding-bottom: 120px; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .cols > .col-b { margin-top: 0; }
+  .cols > div > :first-child { margin-top: 0 !important; }
+  main[data-view="today"] .cols { margin-top: 16px; }
+  main[data-view="poll"] .col-b { display: flex; flex-direction: column; gap: 12px; }
+  main[data-view="poll"] .col-b > * { margin-top: 0 !important; }
+  main[data-view="poll"] .col-b > #found:empty { display: none; }
+  .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .cols > div > h2:first-child { margin-top: 0; }
+  main[data-view="voter"] .cols { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); margin-top: 4px; }
+  main[data-view="voter"] .col-a > .card:first-child, main[data-view="today"] .col-a > .card:first-child { margin-top: 0 !important; }
+  main[data-view="today"] .searchbox { max-width: 720px; }
+  main[data-view="today"] .col-b > .card:first-child { margin-top: 16px; }
+  .cardgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
+  .cardgrid > .card { margin-bottom: 0; }
+  main[data-view="voters"] .vlist, main[data-view="transport"] .vlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 10px; }
+  main[data-view="voters"] .vitem, main[data-view="transport"] .vitem { margin-bottom: 0; height: 100%; }
+  main[data-view="voters"] .chips { flex-wrap: wrap; overflow: visible; }
+  main[data-view="voters"] .searchbox { max-width: 720px; }
+  main[data-view="voters"] #moreBox { max-width: 720px; }
+  main[data-view="follow"] .segs, main[data-view="activity"] > .grid2 { max-width: 560px; }
+  main[data-view="person"] .col-b .step:first-child { margin-top: 0; }
+  main[data-view="poll"] .numpad button { min-height: 64px; }
+  .topbar { max-width: none; }
+  .sheet-bg { align-items: center; padding: 24px; }
+  .sheet { max-width: 600px; border-radius: 24px; max-height: 88vh; padding-bottom: 20px; }
+  .actionbar > div { max-width: 560px; }
+  #toast { left: calc(50% + 110px); bottom: 32px; }
 }

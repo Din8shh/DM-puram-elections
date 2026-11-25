@@ -329,6 +329,7 @@ async function viewToday() {
       <a class="btn k123 num" href="#/voters?num" aria-label="Search by number">123</a>
     </div>
 
+    <div class="cols"><div class="col-a">
     <div class="card stack" style="margin-top:16px">
       <div class="row between" style="align-items:baseline">
         <div style="font-weight:700">${esc(t(scopeMine ? "my_voters" : "all_voters"))}${sub(scopeMine ? "my_voters" : "all_voters")}</div>
@@ -343,7 +344,7 @@ async function viewToday() {
     </div>
 
     ${tasks ? `<h2>${esc(t("do_next"))}${subIn("do_next")}</h2><div class="card flat">${tasks}</div>` : ""}
-
+    </div><div class="col-b">
     <div class="card flat" style="margin-top:12px">
       <a class="task" href="#/poll"><span class="tile" style="background:var(--voted-bg);color:#1D3F6E">${icon("ballot")}</span>
         <span class="grow"><b>${esc(t("poll_card"))}</b>${sub("poll_card")}</span><span style="color:var(--muted)">${icon("chev")}</span></a>
@@ -352,7 +353,8 @@ async function viewToday() {
     ${recent.length ? `<h2>${esc(t("recent"))}${subIn("recent")}</h2>
       <div class="grid2">${recent.slice(0, 4).map((r) => `<a class="card row" href="#/v/${r.serial}" style="padding:12px;text-decoration:none;color:var(--ink);flex-wrap:nowrap">
         <span class="tile" style="width:40px;height:40px">${esc(initial(r.name))}</span>
-        <span style="min-width:0"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</b><span class="en">#${r.serial}${r.house ? " · " + esc(r.house) : ""}</span></span></a>`).join("")}</div>` : ""}`;
+        <span style="min-width:0"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</b><span class="en">#${r.serial}${r.house ? " · " + esc(r.house) : ""}</span></span></a>`).join("")}</div>` : ""}
+    </div></div>`;
 }
 
 // ───────── Voters (search) ─────────
@@ -534,6 +536,7 @@ async function viewVoter(serial, openVisit = false) {
       <span class="sn" style="font-size:18px">${esc(t("serial"))} #${v.serial}</span>
       ${tel ? `<a class="btn iconbtn callbtn" href="tel:${esc(tel)}" aria-label="${esc(t("call"))} ${esc(v.phone)}">${icon("phone")}</a>` : `<span style="width:48px"></span>`}
     </div>
+    <div class="cols"><div class="col-a">
     <div class="card">
       <div class="vhead">
         <img class="photo" alt="" src="${esc(url(v.photo_path))}">
@@ -578,6 +581,7 @@ async function viewVoter(serial, openVisit = false) {
       ${v.leaning && v.leaning !== "unknown" ? `<div class="muted" style="font-size:13px;margin-top:8px">${esc(t("tap_clear"))}${sub("tap_clear")}</div>` : ""}
     </div>
 
+    </div><div class="col-b">
     ${house?.length ? `<div class="card" style="margin-top:12px">
       <div class="row between">
         <div style="font-weight:700">${esc(t("same_house"))} (${house.length + 1})${sub("same_house")}</div>
@@ -637,6 +641,7 @@ async function viewVoter(serial, openVisit = false) {
     </details>` : ""}
 
     ${hist?.length ? `<h2>${esc(t("history"))}</h2><ul class="hist">${hist.map((h) => `<li>${esc(fmtTime(h.at))} · ${esc(personName(h.user_id) || "—")} · ${esc(describe(h))}</li>`).join("")}</ul>` : ""}
+    </div></div>
   `;
   main.classList.add("has-bar");
   document.body.insertAdjacentHTML("beforeend", `<div class="actionbar" id="actionbar"><div>
@@ -651,6 +656,7 @@ async function viewVoter(serial, openVisit = false) {
     return true;
   };
   $("#visitBtn").addEventListener("click", () => openVisitSheet(v));
+  if (matchMedia("(min-width: 1000px)").matches) $("#moreDetails").open = true; // plenty of room on a laptop
   if (openVisit) openVisitSheet(v);
   $("#backBtn").addEventListener("click", () => (history.length > 1 ? history.back() : (location.hash = "#/voters")));
   $("#supGrid").addEventListener("click", async (e) => {
@@ -851,7 +857,7 @@ async function viewFollow() {
       <button class="${seg === "today" ? "on" : ""}" data-seg="today"><span class="n">${nToday}</span>${esc(t("today"))}${sub("today")}</button>
       <button class="${seg === "week" ? "on" : ""}" data-seg="week"><span class="n">${nWeek}</span>${esc(t("this_week"))}${sub("this_week")}</button>
     </div>
-    <div style="margin-top:14px">${rows.length ? rows.map(card).join("") : `<p class="empty">${esc(t("no_followups"))}</p>`}</div>`;
+    <div class="cardgrid" style="margin-top:14px">${rows.length ? rows.map(card).join("") : `<p class="empty">${esc(t("no_followups"))}</p>`}</div>`;
   $("#segs").addEventListener("click", (e) => {
     const b = e.target.closest("[data-seg]"); if (!b) return;
     store.set("fuSeg", b.dataset.seg);
@@ -902,7 +908,7 @@ async function viewTeam() {
         .map(([r, lbl, c]) => `<button class="chip-btn ${roleF === r ? "on" : ""}" data-role="${r}">${esc(lbl)} <span class="num">${c}</span></button>`).join("")}
     </div>
     ${idle.length ? `<div class="card due row" style="margin-top:10px;flex-wrap:nowrap">${icon("clock")}<div><b>${idle.length} ${esc(t("idle_warn"))}</b><span class="en">${esc(idle.map((p) => p.full_name || p.username).join(", "))}</span></div></div>` : ""}
-    <div style="margin-top:12px">
+    <div class="cardgrid" style="margin-top:12px">
       ${shown.map((p) => {
         const s = statBy[p.id];
         return `<div class="card person ${isIdle(p) ? "idle" : ""} ${p.active ? "" : "off"}">
@@ -958,6 +964,7 @@ async function viewPerson(id) {
       <h1 style="margin:0">${esc(isNew ? t("add_person") : p.full_name || p.username)}${isNew ? sub("add_person") : `<span class="en">@${esc(p.username)} · ${esc(STRINGS.en["role_" + p.role])}</span>`}</h1>
     </div>
     <form id="personForm" class="stack">
+      <div class="cols"><div class="col-a stack">
       <div class="grid2">
         <label class="f">${esc(t("full_name"))}<input name="full_name" required value="${esc(p.full_name || "")}"></label>
         <label class="f">${esc(t("phone"))}<input name="phone" type="tel" inputmode="tel" value="${esc(p.phone || "")}"></label>
@@ -973,6 +980,7 @@ async function viewPerson(id) {
             <span><b>${esc(t("role_" + r))}</b><span class="en">${esc(STRINGS.en["role_desc_" + (r === "superadmin" ? "admin" : r)] || "")}</span></span></label>`).join("")}
         </div>
       </div>
+      </div><div class="col-b">
       <div id="hamletStep">
         <div class="step"><b>2</b>${esc(t("which_hamlets"))}${subIn("which_hamlets")}</div>
         <div class="card flat">
@@ -981,6 +989,7 @@ async function viewPerson(id) {
         </div>
         ${isNew ? `<label class="check" style="margin-top:8px"><input type="checkbox" name="assignFree" checked> <span>${esc(t("assign_free"))}</span></label>` : ""}
       </div>`}
+      </div></div>
       <button class="primary big" type="submit">${esc(isNew ? t("create") : t("save"))}</button>
     </form>
     ${isNew ? "" : `
@@ -1112,6 +1121,7 @@ async function viewReports() {
         <h1 style="margin:0">${esc(t("reports_title"))}<span class="en">${esc(hf ? hamletName(Number(hf)) : STRINGS.en.all_hamlets)}</span></h1>
         <select id="repHamlet" style="width:auto;max-width:55%">${opt("", t("all_hamlets"), hf)}${hamlets.map((h) => opt(h.id, hamletName(h.id), hf)).join("")}</select>
       </div>
+      <div class="cols"><div class="col-a">
       <div class="card hero">
         <div class="lbl" style="font-weight:600">${esc(t("expected"))}${lang === "te" ? ` <span style="font-family:'Noto Sans',sans-serif;font-weight:500">· ${esc(STRINGS.en.expected)}</span>` : ""}</div>
         <div class="row" style="align-items:baseline;gap:8px"><span class="big">${nf(expected)}</span>${target ? `<span class="num lbl">/ ${esc(STRINGS.en.target.toLowerCase())} ${nf(target)}</span>` : ""}</div>
@@ -1129,6 +1139,7 @@ async function viewReports() {
         <div class="card" style="padding:12px 14px"><div class="num" style="font-size:24px;font-weight:700">${pct(T.slips, T.total)}%</div><b class="small">${esc(t("slips_delivered"))}</b><span class="en">${nf(T.slips)}</span></div>
         <div class="card" style="padding:12px 14px"><div class="num" style="font-size:24px;font-weight:700;color:var(--voted)">${pct(T.voted, T.total)}%</div><b class="small">${esc(t("turnout"))}</b><span class="en">${esc(STRINGS.en.ours_voted)}: ${nf(T.ours_voted)}/${nf(T.ours_total)}</span></div>
       </div>
+      </div><div class="col-b">
       <h2>${esc(t("by_hamlet"))}${subIn("by_hamlet")}</h2>
       <div class="card flat">
         <div class="hr en" style="padding-bottom:4px"><span>${esc(STRINGS.en.hamlet)}</span><span>${esc(STRINGS.en.st_contacted)}</span><span style="text-align:right">${esc(STRINGS.en.expected.split(" ")[0])}</span></div>
@@ -1151,6 +1162,7 @@ async function viewReports() {
           <button type="submit">${esc(t("save"))}</button>
         </form>
       </details>` : ""}
+      </div></div>
       <p class="small muted center">${esc(t("refreshed"))}: ${esc(fmtTime(new Date().toISOString()))}</p>`;
     void el;
     $("#repHamlet").addEventListener("change", (e) => { store.set("repHamlet", e.target.value); draw(); });
@@ -1258,16 +1270,19 @@ function viewPoll() {
   main.innerHTML = `
     <h1>${esc(t("poll_title"))}</h1>
     <p class="small muted">${esc(t("poll_help"))}</p>
+    <div class="cols"><div class="col-a">
     <div class="serial-display" id="sd">&nbsp;</div>
     <div class="numpad" style="margin-top:8px">
       ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button data-d="${n}">${n}</button>`).join("")}
       <button data-d="C">${esc(t("clear"))}</button><button data-d="0">0</button><button data-d="B">⌫</button>
     </div>
     <button class="primary big" id="findBtn" style="margin-top:8px">${esc(t("find"))}</button>
+    </div><div class="col-b">
     <div id="found" style="margin-top:12px"></div>
     <a class="btn" style="width:100%;margin-top:12px" href="#/voters" id="pendingLink">🙋 ${esc(t("ours_pending"))}</a>
     <label class="card check" style="margin-top:12px"><input type="checkbox" id="pm" ${pollMode() ? "checked" : ""}> ${esc(t("poll_mode"))}</label>
     ${marks.length ? `<h2>${esc(t("recent_marks"))}</h2><ul class="hist">${marks.map((m) => `<li><a href="#/v/${m.serial}">${m.serial}</a> · ${esc(m.name)} · ${esc(fmtTime(new Date(m.at).toISOString()))}</li>`).join("")}</ul>` : ""}
+    </div></div>
   `;
   const show = () => ($("#sd").textContent = digits || " ");
   $(".numpad").addEventListener("click", (e) => {
@@ -1748,6 +1763,7 @@ function route() {
   const full = location.hash.replace(/^#/, "") || "/";
   const [h, params = ""] = full.split("?");
   window.scrollTo(0, 0);
+  main.dataset.view = /^\/v\/\d+/.test(h) ? "voter" : (/^\/team\/(new|p\/)/.test(h) ? "person" : (h.split("/")[1] || (isAdmin() && !location.hash && matchMedia("(min-width: 1000px)").matches ? "dashboard" : "today")));
   let m = h.match(/^\/v\/(\d+)(\/visit)?/);
   if (m) return viewVoter(Number(m[1]), !!m[2]);
   if (h.startsWith("/voters")) return viewSearch(params);
