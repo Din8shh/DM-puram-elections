@@ -1,0 +1,14 @@
+{
+  "name": "dm-puram-elections",
+  "private": true,
+  "type": "module",
+  "description": "Campaign and poll-day tool for the D.M. Puram gram panchayat election",
+  "scripts": {
+    "import": "node scripts/import.mjs",
+    "serve": "npx --yes http-server@14.1.1 web -p 8080 -c-1"
+  },
+  "engines": { "node": ">=20.12" },
+  "dependencies": {
+    "@supabase/supabase-js": "2.99.3"
+  }
+}
