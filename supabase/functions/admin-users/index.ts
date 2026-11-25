@@ -29,16 +29,25 @@ Deno.serve(async (req) => {
     const { data: { user } } = await caller.auth.getUser();
     if (!user) return json({ error: "Not signed in" }, 401);
     const { data: me } = await admin.from("profiles").select("role, active").eq("id", user.id).single();
-    if (!me || me.role !== "admin" || !me.active) return json({ error: "Admins only" }, 403);
+    if (!me || !me.active || !["admin", "superadmin"].includes(me.role)) return json({ error: "Admins only" }, 403);
+    const isSuper = me.role === "superadmin";
 
     const body = await req.json();
     const action = body.action;
+
+    // Admins manage in-charges and workers; only the super admin manages admins.
+    if (!isSuper && body.id && body.id !== user.id) {
+      const { data: target } = await admin.from("profiles").select("role").eq("id", body.id).single();
+      if (!target || !["incharge", "worker"].includes(target.role)) return json({ error: "Only the super admin can change admins" }, 403);
+    }
 
     if (action === "create") {
       const username = String(body.username ?? "").trim().toLowerCase();
       if (!/^[a-z0-9_.-]{3,30}$/.test(username)) return json({ error: "Username: 3-30 letters/numbers" }, 400);
       if (!body.password || String(body.password).length < 6) return json({ error: "Password: at least 6 characters" }, 400);
-      const role = ["admin", "incharge", "worker"].includes(body.role) ? body.role : "worker";
+      const allowed = isSuper ? ["admin", "incharge", "worker"] : ["incharge", "worker"];
+      if (body.role && !allowed.includes(body.role)) return json({ error: "Only the super admin can create admins" }, 403);
+      const role = allowed.includes(body.role) ? body.role : "worker";
       const { data, error } = await admin.auth.admin.createUser({
         email: `${username}@${EMAIL_DOMAIN}`,
         password: String(body.password),

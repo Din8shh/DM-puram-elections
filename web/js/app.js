@@ -8,7 +8,7 @@ const main = $("#main");
 const LEANINGS = ["strong", "leaning", "undecided", "opposed", "unknown"];
 const PAGE = 40;
 const VOTER_COLS = "serial,ward,hamlet_id,name,name_en,relation_type,relation_name,age,gender,house_no,epic,photo_path," +
-  "needs_review,phone,leaning,contacted,notes,needs_transport,away,assigned_to,voted,voted_at,updated_at";
+  "needs_review,phone,leaning,contacted,notes,needs_transport,away,assigned_to,voted,voted_at,updated_at,slip_delivered,follow_up_on";
 
 // ───────── small helpers ─────────
 const store = {
@@ -21,6 +21,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const fmtTime = (iso) => iso ? new Date(iso).toLocaleString(lang === "te" ? "te-IN" : "en-IN",
   { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 const pct = (a, b) => b ? Math.round((a / b) * 100) : 0;
+// Today's date in India, as YYYY-MM-DD (for follow-ups).
+const todayIST = () => new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
 
 let toastTimer;
 function toast(msg, isErr = false) {
@@ -41,8 +43,9 @@ let me = null;              // profile row
 let hamlets = [];           // [{id,name_te,name_en}]
 let team = [];              // profiles
 const photoCache = new Map();
-const isAdmin = () => me?.role === "admin";
-const canAssign = () => me?.role === "admin" || me?.role === "incharge";
+const isSuper = () => me?.role === "superadmin";
+const isAdmin = () => me?.role === "admin" || isSuper();
+const canAssign = () => isAdmin() || me?.role === "incharge";
 const hamletName = (id) => { const h = hamlets.find((x) => x.id === id); return h ? (lang === "te" ? h.name_te : h.name_en || h.name_te) : ""; };
 const personName = (id) => team.find((p) => p.id === id)?.full_name || "";
 const pollMode = () => store.get("pollMode", false);
@@ -131,6 +134,10 @@ function applyFilters(qb, f) {
     case "review": qb = qb.eq("needs_review", true); break;
     case "mine": qb = qb.eq("assigned_to", me.id); break;
     case "has_phone": qb = qb.not("phone", "is", null).neq("phone", ""); break;
+    case "follow_up_due": qb = qb.lte("follow_up_on", todayIST()); break;
+    case "slip_pending": qb = qb.eq("slip_delivered", false); break;
+    case "slip_done": qb = qb.eq("slip_delivered", true); break;
+    case "unassigned": qb = qb.is("assigned_to", null); break;
   }
   const q = (f.q || "").replace(/[,()"'%*\\:]/g, " ").trim();
   if (!q) return qb;
@@ -158,6 +165,8 @@ function voterItem(v, url) {
       ${v.voted ? `<span class="chip voted">✓ ${esc(t("st_voted"))}</span>` : ""}
       ${leanChip(v.leaning)}
       ${v.contacted ? `<span class="chip">☎</span>` : ""}
+      ${v.slip_delivered ? `<span class="chip" title="${esc(t("slip"))}">🧾</span>` : ""}
+      ${v.follow_up_on && v.follow_up_on <= todayIST() ? `<span class="chip undecided">📅 ${esc(v.follow_up_on.slice(5))}</span>` : ""}
       ${v.needs_review ? `<span class="chip review">!</span>` : ""}
       ${quick}
     </div></a></li>`;
@@ -172,13 +181,22 @@ async function viewSearch() {
       <div class="filters">
         <select id="fHamlet">${opt("", t("all_hamlets"), filters.hamlet)}${hamlets.map((h) => opt(h.id, `${h.id}. ${hamletName(h.id)}`, filters.hamlet)).join("")}</select>
         <select id="fLean">${opt("", t("all_leanings"), filters.lean)}${opt("ours", t("ours"), filters.lean)}${LEANINGS.map((l) => opt(l, t("lean_" + l), filters.lean)).join("")}</select>
-        <select id="fStatus">${opt("", t("all_status"), filters.status)}${["not_contacted", "contacted", "not_voted", "voted", "ours_not_voted", "transport", "away", "has_phone", "mine", "review"].map((s) => opt(s, t("st_" + s), filters.status)).join("")}</select>
+        <select id="fStatus">${opt("", t("all_status"), filters.status)}${["follow_up_due", "not_contacted", "contacted", "slip_pending", "slip_done", "not_voted", "voted", "ours_not_voted", "transport", "away", "has_phone", "mine", ...(canAssign() ? ["unassigned"] : []), "review"].map((s) => opt(s, t("st_" + s), filters.status)).join("")}</select>
         <select id="fGender">${opt("", t("all_genders"), filters.gender)}${opt("M", t("male"), filters.gender)}${opt("F", t("female"), filters.gender)}</select>
       </div>
     </div>
+    <div class="row" style="margin:2px 0 6px;gap:6px">
+      ${[["follow_up_due", "📅"], ["slip_pending", "🧾"], ["mine", "👤"], ["not_contacted", "☎"]].map(([s, ic]) =>
+        `<button class="small ${filters.status === s ? "primary" : ""}" data-quick="${s}">${ic} ${esc(t("st_" + s))}</button>`).join("")}
+    </div>
+    ${canAssign() ? `<div class="row small" style="margin:0 0 8px">
+      <span class="muted">${esc(t("assign_shown"))}</span>
+      <select id="bulkWorker" style="width:auto;min-height:36px;font-size:14px;flex:1"><option value="">—</option><option value="__none">${esc(t("nobody"))}</option>${team.filter((p) => p.active).map((p) => `<option value="${p.id}">${esc(p.full_name || p.username)}</option>`).join("")}</select>
+      <button class="small" id="bulkAssign">${esc(t("assign"))}</button>
+    </div>` : ""}
     <div class="row small muted" style="justify-content:space-between;margin:4px 2px 8px">
       <span id="count"></span>
-      ${isAdmin() ? `<button class="small" id="csvBtn">⬇ ${esc(t("export_csv"))}</button>` : ""}
+      ${isSuper() ? `<button class="small" id="csvBtn">⬇ ${esc(t("export_csv"))}</button>` : ""}
     </div>
     <ul class="vlist" id="list"></ul>
     <div class="center"><button id="more" hidden>${esc(t("load_more"))}</button></div>`;
@@ -223,6 +241,22 @@ async function viewSearch() {
     toast(`${serial} ✓ ${t("st_voted")}`);
   });
   $("#csvBtn")?.addEventListener("click", () => exportCsv());
+  $$("[data-quick]").forEach((b) => b.addEventListener("click", () => {
+    filters.status = filters.status === b.dataset.quick ? "" : b.dataset.quick;
+    store.set("filters", filters);
+    viewSearch();
+  }));
+  $("#bulkAssign")?.addEventListener("click", async () => {
+    const who = $("#bulkWorker").value;
+    if (!who) return;
+    if (!total) return;
+    const name = who === "__none" ? t("nobody") : personName(who);
+    if (!confirm(`${t("assign_confirm")} ${total} → ${name}?`)) return;
+    const { error } = await applyFilters(sb.from("voters").update({ assigned_to: who === "__none" ? null : who }), filters);
+    if (error) return fail(error);
+    toast(`${total} → ${name}`);
+    load(true);
+  });
   load(true);
 }
 
@@ -299,6 +333,11 @@ async function viewVoter(serial) {
         <label class="f grow">${esc(t("phone"))}<input name="phone" type="tel" inputmode="tel" value="${esc(v.phone || "")}"></label>
         ${tel ? `<a class="btn" style="margin-top:18px" href="tel:${esc(tel)}">📞 ${esc(t("call"))}</a>` : ""}
       </div>
+      <label class="check"><input type="checkbox" name="slip_delivered" ${v.slip_delivered ? "checked" : ""}> 🧾 ${esc(t("slip"))}</label>
+      <div class="row">
+        <label class="f grow">📅 ${esc(t("follow_up"))}<input type="date" name="follow_up_on" value="${esc(v.follow_up_on || "")}"></label>
+        <button type="button" class="small" style="margin-top:18px" id="fuClear">✕</button>
+      </div>
       <label class="check"><input type="checkbox" name="needs_transport" ${v.needs_transport ? "checked" : ""}> ${esc(t("transport"))}</label>
       <label class="check"><input type="checkbox" name="away" ${v.away ? "checked" : ""}> ${esc(t("away"))}</label>
       ${canAssign() ? `<label class="f">${esc(t("assigned"))}<select name="assigned_to"><option value="">${esc(t("nobody"))}</option>${team.filter((p) => p.active).map((p) => `<option value="${p.id}" ${p.id === v.assigned_to ? "selected" : ""}>${esc(p.full_name || p.username)}</option>`).join("")}</select></label>`
@@ -307,9 +346,14 @@ async function viewVoter(serial) {
       <button class="primary" type="submit">${esc(t("save"))}</button>
     </form>
 
-    ${house?.length ? `<h2>${esc(t("household"))} (${esc(v.house_no)})</h2><ul class="vlist">${house.map((h) => voterItem(h, url)).join("")}</ul>` : ""}
+    ${house?.length ? `<h2>${esc(t("household"))} (${esc(v.house_no)})</h2>
+      <div class="row small" style="margin-bottom:8px">
+        <button class="small" id="houseLean">🏠 ${esc(t("house_same_support"))}</button>
+        <button class="small" id="houseSlip">🧾 ${esc(t("house_slips"))}</button>
+      </div>
+      <ul class="vlist">${house.map((h) => voterItem(h, url)).join("")}</ul>` : ""}
 
-    ${isAdmin() ? `
+    ${isSuper() ? `
     <details class="card" style="margin-top:12px"><summary>${esc(t("edit_details"))}</summary>
       <form class="stack" id="rollForm" style="margin-top:10px">
         <label class="f">${esc(t("name"))}<input name="name" value="${esc(v.name)}"></label>
@@ -331,6 +375,22 @@ async function viewVoter(serial) {
     ${hist?.length ? `<h2>${esc(t("history"))}</h2><ul class="hist">${hist.map((h) => `<li>${esc(fmtTime(h.at))} · ${esc(personName(h.user_id) || "—")} · ${esc(describe(h))}</li>`).join("")}</ul>` : ""}
   `;
 
+  $("#fuClear").addEventListener("click", () => { $("#campForm").follow_up_on.value = ""; });
+  const houseUpdate = async (patch) => {
+    const { error } = await sb.from("voters").update(patch).eq("hamlet_id", v.hamlet_id).eq("house_no", v.house_no);
+    if (error) return fail(error);
+    toast(t("saved"));
+    viewVoter(v.serial);
+  };
+  $("#houseLean")?.addEventListener("click", () => {
+    if (v.leaning === "unknown") return toast(t("set_support_first"), true);
+    if (!confirm(`${t("house_same_support")}: ${t("lean_" + v.leaning)} (${house.length + 1})?`)) return;
+    houseUpdate({ leaning: v.leaning, contacted: true });
+  });
+  $("#houseSlip")?.addEventListener("click", () => {
+    if (!confirm(`${t("house_slips")} (${house.length + 1})?`)) return;
+    houseUpdate({ slip_delivered: true });
+  });
   $("#backBtn").addEventListener("click", () => (history.length > 1 ? history.back() : (location.hash = "#/")));
   let leaning = v.leaning;
   $("#leanSeg").addEventListener("click", (e) => {
@@ -349,6 +409,8 @@ async function viewVoter(serial) {
     // Choosing a support level means someone spoke to them.
     if (leaning !== "unknown" && leaning !== v.leaning) patch.contacted = true;
     if (f.assigned_to) patch.assigned_to = f.assigned_to.value || null;
+    patch.slip_delivered = f.slip_delivered.checked;
+    patch.follow_up_on = f.follow_up_on.value || null;
     const { error } = await sb.from("voters").update(patch).eq("serial", v.serial);
     if (error) return fail(error);
     toast(t("saved"));
@@ -393,7 +455,8 @@ function describe(h) {
   return Object.entries(d).map(([k, val]) => {
     if (k === "leaning") return `${t("support")}: ${t("lean_" + val)}`;
     if (k === "assigned_to") return `${t("assigned")}: ${personName(val) || t("nobody")}`;
-    if (typeof val === "boolean") return `${t(k === "needs_transport" ? "st_transport" : k === "away" ? "st_away" : k)}: ${val ? "✓" : "✗"}`;
+    if (typeof val === "boolean") return `${t(k === "needs_transport" ? "st_transport" : k === "away" ? "st_away" : k === "slip_delivered" ? "slip" : k)}: ${val ? "✓" : "✗"}`;
+    if (k === "follow_up_on") return `${t("follow_up")}: ${val ?? "—"}`;
     return `${t(k === "house_no" ? "house" : k)}: ${val ?? "—"}`;
   }).join(", ");
 }
@@ -469,12 +532,19 @@ async function viewDash() {
     const { data: rows, error } = await sb.rpc("hamlet_stats");
     if (error) return fail(error);
     const sum = (k) => rows.reduce((a, r) => a + Number(r[k] || 0), 0);
-    const T = Object.fromEntries(["total", "male", "female", "contacted", "strong", "leaning", "undecided", "opposed", "unknown", "voted", "ours_voted", "ours_total", "transport", "away"].map((k) => [k, sum(k)]));
+    const T = Object.fromEntries(["total", "male", "female", "contacted", "strong", "leaning", "undecided", "opposed", "unknown", "voted", "ours_voted", "ours_total", "transport", "away", "slips", "follow_ups_due"].map((k) => [k, sum(k)]));
+    const target = (id) => hamlets.find((h) => h.id === id)?.target_votes;
+    const T_target = hamlets.reduce((a, h) => a + (h.target_votes || 0), 0);
     const bar = (r) => `<div class="bar">${["strong", "leaning", "undecided", "opposed"].map((l) => `<span style="width:${pct(r[l], r.total)}%;background:var(--${l})"></span>`).join("")}</div>`;
     let workers = "";
+    if (canAssign()) {
+      const { data: a } = await sb.rpc("assignment_stats");
+      if (a?.length) workers += `<h2>${esc(t("worker_progress"))}</h2><div class="tablewrap"><table><thead><tr><th></th><th>${esc(t("assigned_n"))}</th><th>${esc(t("contacted_pct"))}</th><th>${esc(t("ours"))}</th><th>🧾</th><th>📅</th><th>${esc(t("st_voted"))}</th></tr></thead><tbody>
+        ${a.map((r) => `<tr><td>${esc(r.full_name)}</td><td>${r.assigned}</td><td>${pct(r.contacted, r.assigned)}%</td><td>${r.ours}</td><td>${pct(r.slips, r.assigned)}%</td><td>${r.follow_ups_due}</td><td>${r.voted}</td></tr>`).join("")}</tbody></table></div>`;
+    }
     if (isAdmin()) {
       const { data: w } = await sb.rpc("worker_stats");
-      if (w?.length) workers = `<h2>${esc(t("by_worker"))}</h2><div class="tablewrap"><table><thead><tr><th></th><th>${esc(t("updates"))}</th><th>${esc(t("marks"))}</th><th>${esc(t("last"))}</th></tr></thead><tbody>
+      if (w?.length) workers += `<h2>${esc(t("by_worker"))}</h2><div class="tablewrap"><table><thead><tr><th></th><th>${esc(t("updates"))}</th><th>${esc(t("marks"))}</th><th>${esc(t("last"))}</th></tr></thead><tbody>
         ${w.map((r) => `<tr><td>${esc(r.full_name)}</td><td>${r.updates}</td><td>${r.voted_marks}</td><td>${esc(fmtTime(r.last_at))}</td></tr>`).join("")}</tbody></table></div>`;
     }
     el.innerHTML = `
@@ -482,6 +552,9 @@ async function viewDash() {
         <div class="stat"><div class="n">${T.total}</div><div class="l">${esc(t("total"))} · ${T.male} ${esc(t("male"))} / ${T.female} ${esc(t("female"))}</div></div>
         <div class="stat"><div class="n">${pct(T.contacted, T.total)}%</div><div class="l">${esc(t("contacted_pct"))} (${T.contacted})</div></div>
         <div class="stat"><div class="n" style="color:var(--strong)">${T.ours_total}</div><div class="l">${esc(t("ours"))}</div>${bar(T)}</div>
+        <div class="stat"><div class="n">${pct(T.slips, T.total)}%</div><div class="l">🧾 ${esc(t("slips_delivered"))} (${T.slips})</div></div>
+        <div class="stat"><div class="n" style="color:var(--undecided)">${T.follow_ups_due}</div><div class="l">📅 ${esc(t("st_follow_up_due"))}</div></div>
+        <div class="stat"><div class="n">${T_target ? pct(T.ours_total, T_target) + "%" : "—"}</div><div class="l">🎯 ${esc(t("of_target"))}${T_target ? ` (${T.ours_total}/${T_target})` : ""}</div></div>
         <div class="stat"><div class="n" style="color:var(--voted)">${pct(T.voted, T.total)}%</div><div class="l">${esc(t("turnout"))} (${T.voted}) · ${esc(t("ours_voted"))}: ${T.ours_voted}/${T.ours_total}</div></div>
       </div>
       <div class="row small" style="margin-top:8px;gap:12px">
@@ -490,8 +563,8 @@ async function viewDash() {
       </div>
       <h2>${esc(t("by_hamlet"))}</h2>
       <div class="tablewrap"><table>
-        <thead><tr><th>${esc(t("hamlet"))}</th><th>${esc(t("total"))}</th><th>${esc(t("contacted_pct"))}</th><th>${esc(t("lean_strong"))}</th><th>${esc(t("lean_leaning"))}</th><th>${esc(t("lean_undecided"))}</th><th>${esc(t("lean_opposed"))}</th><th>${esc(t("turnout"))}</th><th>${esc(t("ours_voted"))}</th></tr></thead>
-        <tbody>${rows.map((r) => `<tr><td>${esc(hamletName(r.hamlet_id))}${bar(r)}</td><td>${r.total}</td><td>${pct(r.contacted, r.total)}%</td><td>${r.strong}</td><td>${r.leaning}</td><td>${r.undecided}</td><td>${r.opposed}</td><td>${r.voted} (${pct(r.voted, r.total)}%)</td><td>${r.ours_voted}/${r.ours_total}</td></tr>`).join("")}</tbody>
+        <thead><tr><th>${esc(t("hamlet"))}</th><th>${esc(t("total"))}</th><th>${esc(t("contacted_pct"))}</th><th>${esc(t("lean_strong"))}</th><th>${esc(t("lean_leaning"))}</th><th>${esc(t("lean_undecided"))}</th><th>${esc(t("lean_opposed"))}</th><th>🎯 ${esc(t("target"))}</th><th>🧾</th><th>📅</th><th>${esc(t("turnout"))}</th><th>${esc(t("ours_voted"))}</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr><td>${esc(hamletName(r.hamlet_id))}${bar(r)}</td><td>${r.total}</td><td>${pct(r.contacted, r.total)}%</td><td>${r.strong}</td><td>${r.leaning}</td><td>${r.undecided}</td><td>${r.opposed}</td><td>${target(r.hamlet_id) ? `${r.ours_total}/${target(r.hamlet_id)}` : "—"}</td><td>${pct(r.slips, r.total)}%</td><td>${r.follow_ups_due}</td><td>${r.voted} (${pct(r.voted, r.total)}%)</td><td>${r.ours_voted}/${r.ours_total}</td></tr>`).join("")}</tbody>
       </table></div>
       ${workers}
       <p class="small muted center">${esc(t("refreshed"))}: ${esc(fmtTime(new Date().toISOString()))}</p>`;
@@ -516,11 +589,20 @@ async function viewTeam() {
   setTab("team");
   if (!isAdmin()) { location.hash = "#/"; return; }
   await loadTeam();
-  const roleOpts = (cur) => ["worker", "incharge", "admin"].map((r) => `<option value="${r}" ${cur === r ? "selected" : ""}>${esc(t("role_" + r))}</option>`).join("");
+  const roleList = isSuper() ? ["worker", "incharge", "admin"] : ["worker", "incharge"];
+  const canManage = (p) => p.id !== me.id && (isSuper() || ["incharge", "worker"].includes(p.role));
+  const roleOpts = (cur) => (cur === "superadmin" ? ["superadmin"] : roleList.includes(cur) ? roleList : [cur]).map((r) => `<option value="${r}" ${cur === r ? "selected" : ""}>${esc(t("role_" + r))}</option>`).join("");
   const hamletChecks = (sel = []) => `<div class="hamlet-checks">${hamlets.map((h) => `<label class="check small"><input type="checkbox" name="h" value="${h.id}" ${sel.includes(h.id) ? "checked" : ""}> ${esc(hamletName(h.id))}</label>`).join("")}</div>`;
   main.innerHTML = `
     <h1>${esc(t("team_title"))}</h1>
     <p class="small muted">${esc(t("team_help"))}</p>
+    ${isSuper() ? `<details class="card" style="margin-bottom:12px"><summary><strong>🎯 ${esc(t("targets"))}</strong></summary>
+      <form id="targetForm" class="stack" style="margin-top:10px">
+        <p class="small muted">${esc(t("targets_help"))}</p>
+        ${hamlets.map((h) => `<label class="row small"><span class="grow">${esc(hamletName(h.id))}</span><input type="number" min="0" name="t${h.id}" value="${esc(h.target_votes ?? "")}" style="width:110px"></label>`).join("")}
+        <button type="submit">${esc(t("save"))}</button>
+      </form>
+    </details>` : ""}
     <details class="card"><summary><strong>＋ ${esc(t("add_member"))}</strong></summary>
       <form class="stack" id="addForm" style="margin-top:10px">
         <label class="f">${esc(t("full_name"))}<input name="full_name" required></label>
@@ -542,15 +624,15 @@ async function viewTeam() {
           <div class="row" style="justify-content:space-between">
             <div><strong>${esc(p.full_name || p.username)}</strong> <span class="small muted">@${esc(p.username)}</span>
               ${p.active ? "" : `<span class="chip opposed">${esc(t("inactive"))}</span>`}
-              <div class="small muted">${esc(t("role_" + p.role))}${p.phone ? " · " + esc(p.phone) : ""} · ${p.role === "admin" ? "—" : esc(p.hamlet_ids.map(hamletName).join(", ") || "—")}</div>
+              <div class="small muted">${esc(t("role_" + p.role))}${p.phone ? " · " + esc(p.phone) : ""} · ${["admin", "superadmin"].includes(p.role) ? "—" : esc(p.hamlet_ids.map(hamletName).join(", ") || "—")}</div>
             </div>
-            <button class="small" data-edit="${p.id}">${esc(t("edit"))}</button>
+            ${canManage(p) || p.id === me.id ? `<button class="small" data-edit="${p.id}">${esc(t("edit"))}</button>` : ""}
           </div>
           <form class="stack" data-form="${p.id}" hidden style="margin-top:10px">
             <label class="f">${esc(t("full_name"))}<input name="full_name" value="${esc(p.full_name)}"></label>
             <div class="row">
               <label class="f grow">${esc(t("phone"))}<input name="phone" value="${esc(p.phone || "")}"></label>
-              <label class="f grow">${esc(t("role"))}<select name="role" ${p.id === me.id ? "disabled" : ""}>${roleOpts(p.role)}</select></label>
+              <label class="f grow">${esc(t("role"))}<select name="role" ${canManage(p) ? "" : "disabled"}>${roleOpts(p.role)}</select></label>
             </div>
             <div class="small muted">${esc(t("hamlets"))}</div>${hamletChecks(p.hamlet_ids)}
             <div class="row"><button class="primary" type="submit">${esc(t("save"))}</button></div>
@@ -558,7 +640,7 @@ async function viewTeam() {
               <input name="newpw" placeholder="${esc(t("new_pw"))}" class="grow" style="flex:1">
               <button type="button" data-reset="${p.id}">${esc(t("reset_pw"))}</button>
             </div>
-            ${p.id === me.id ? "" : `<button type="button" class="${p.active ? "danger" : ""}" data-active="${p.id}" data-to="${!p.active}">${esc(p.active ? t("deactivate") : t("activate"))}</button>`}
+            ${!canManage(p) ? "" : `<button type="button" class="${p.active ? "danger" : ""}" data-active="${p.id}" data-to="${!p.active}">${esc(p.active ? t("deactivate") : t("activate"))}</button>`}
           </form>
         </li>`).join("")}
     </ul>`;
@@ -572,6 +654,18 @@ async function viewTeam() {
     }
     return data;
   };
+  $("#targetForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    for (const h of hamlets) {
+      const val = e.target["t" + h.id].value;
+      const tv = val === "" ? null : Number(val);
+      if (tv === (h.target_votes ?? null)) continue;
+      const { error } = await sb.from("hamlets").update({ target_votes: tv }).eq("id", h.id);
+      if (error) return fail(error);
+      h.target_votes = tv;
+    }
+    toast(t("saved"));
+  });
   $("#addForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
