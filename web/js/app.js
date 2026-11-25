@@ -1566,9 +1566,12 @@ async function viewAnalytics(tab = "overview", fresh = false, arg = "") {
   const hs = [...houses.values()];
   const sizeDist = sizeBuckets.map(([lbl, a, b]) => { const g = hs.filter((h) => h.length >= a && h.length <= b); return { lbl, houses: g.length, voters: g.reduce((s, h) => s + h.length, 0) }; });
   const maxSize = Math.max(1, ...sizeDist.map((d) => d.voters));
-  const bigOpen = hs.filter((h) => h.length >= 5).map((h) => ({ h, s: summarize(h) }))
+  const bigAll = hs.filter((h) => h.length >= 5);
+  const bigOpenAll = bigAll.map((h) => ({ h, s: summarize(h) }))
     .filter((x) => x.s.persu >= Math.ceil(x.s.n / 2))
-    .sort((a, b) => b.s.persu - a.s.persu || b.s.n - a.s.n).slice(0, 12);
+    .sort((a, b) => b.s.persu - a.s.persu || b.s.n - a.s.n);
+  const showAllBig = store.get("bigAll", false);
+  const bigOpen = showAllBig ? bigOpenAll : bigOpenAll.slice(0, 12);
 
   // hamlets
   const hamRows = hamlets.map((h) => {
@@ -1698,9 +1701,10 @@ async function viewAnalytics(tab = "overview", fresh = false, arg = "") {
       </section>
       <section class="card">
         <h2>${L("Big houses still open", "ఇంకా తేలని పెద్ద ఇళ్ళు")}</h2>
-        <p class="small muted" style="margin-top:0">5+ voters, at least half not yet Sure, Likely or Against. Send a senior person.</p>
-        ${bigOpen.length ? `<div class="tablewrap flat"><table class="an"><thead><tr><th>House</th><th>Hamlet</th><th class="n">Voters</th><th class="n">Open</th><th style="min-width:110px">Support</th></tr></thead><tbody>
-          ${bigOpen.map(({ h, s }) => `<tr><td><a href="#/voters" ${goAttr({ q: h[0].house_no, hamlet: String(h[0].hamlet_id) })}>${esc(h[0].house_no)}</a></td><td>${esc(hamletName(h[0].hamlet_id))}</td><td class="n">${s.n}</td><td class="n">${s.persu}</td><td>${miniStack(s)}</td></tr>`).join("")}
+        <p class="small muted" style="margin-top:0"><b>${nf(bigAll.length)}</b> houses have 5 or more voters (the 5, 6–9 and 10+ rows on the left). <b>${nf(bigOpenAll.length)}</b> of them are still open: at least half their voters are not yet Sure, Likely or Against. ${bigOpenAll.length > bigOpen.length ? `Showing the ${bigOpen.length} with the most open voters.` : "All are shown."} Send a senior person.</p>
+        ${bigOpenAll.length > 12 ? `<button type="button" class="small" id="bigAllBtn" style="margin-bottom:8px">${showAllBig ? "Show top 12" : `Show all ${nf(bigOpenAll.length)}`}</button>` : ""}
+        ${bigOpen.length ? `<div class="tablewrap flat"><table class="an"><thead><tr><th>House</th><th>Hamlet</th><th class="n">Voters</th><th class="n">Open</th><th style="min-width:90px">Support</th></tr></thead><tbody>
+          ${bigOpen.map(({ h, s }) => `<tr><td><a href="#/voters" ${goAttr({ q: h[0].house_no, hamlet: String(h[0].hamlet_id) })}>${esc(h[0].house_no)}</a></td><td style="white-space:normal">${esc(hamletName(h[0].hamlet_id))}</td><td class="n">${s.n}</td><td class="n">${s.persu}</td><td>${miniStack(s)}</td></tr>`).join("")}
         </tbody></table></div>` : `<p class="muted">None right now.</p>`}
       </section>
     </div>
@@ -1781,12 +1785,12 @@ async function viewAnalytics(tab = "overview", fresh = false, arg = "") {
       </table></div>
     </section>`;
   const todoItem = (n, en, te, note, href, tone, ic, go = null) => n ? `<a class="dk-todo" href="${href}" ${go ? goAttr(go) : ""}><span class="dot ${tone}">${icon(ic)}</span><span class="grow"><b>${nf(n)} ${L(en, te)}</b><span class="en">${note}</span></span>${icon("chev", "width:18px;height:18px;color:var(--muted)")}</a>` : "";
-  const bigOpenAll = hs.filter((h) => h.length >= 5 && summarize(h).persu >= Math.ceil(h.length / 2)).length;
+
   const todos = [
     todoItem(overdue, "follow-ups overdue", "ఫాలో-అప్‌లు గడువు దాటాయి", "promised visits not done yet", "#/voters", "late", "cal", { status: "follow_up_due" }),
     todoItem(noWorker, "voters have no worker", "ఓటర్లకు వర్కర్ లేరు", "assign them so someone visits", "#/voters", "warn", "userplus", { status: "unassigned" }),
     todoItem(quiet.length, "people quiet for 3+ days", "మంది 3+ రోజులుగా పని చేయలేదు", esc(quiet.slice(0, 4).map((p) => p.full_name || p.username).join(", ")), "#/team", "warn", "clock"),
-    todoItem(bigOpenAll, "big houses still open", "పెద్ద ఇళ్ళు ఇంకా తేలలేదు", "5+ voters each · send a senior person", "#/dashboard/houses", "info", "home"),
+    todoItem(bigOpenAll.length, "big houses still open", "పెద్ద ఇళ్ళు ఇంకా తేలలేదు", "5+ voters each · send a senior person", "#/dashboard/houses", "info", "home"),
     todoItem(S.away, "voters live outside", "మంది ఊరిలో లేరు", "call early to plan for poll day", "#/voters", "info", "phone", { status: "away" }),
   ].join("");
   sec.todo = `<section class="card dk-sec"><div class="dk-sec-h"><h2>${L("To do now", "ఇప్పుడు చేయాల్సినవి")}</h2></div>${todos || `<p class="muted" style="padding:0 16px 16px">Nothing urgent.</p>`}</section>`;
@@ -1870,6 +1874,7 @@ async function viewAnalytics(tab = "overview", fresh = false, arg = "") {
   });
   $$("tr.go[data-href]").forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest("a")) location.hash = tr.dataset.href; }));
   $("#anRefresh").addEventListener("click", () => viewAnalytics(tab, true));
+  $("#bigAllBtn")?.addEventListener("click", () => { store.set("bigAll", !showAllBig); viewAnalytics(tab, false, arg); });
   $("#anPrint").addEventListener("click", () => window.print());
 }
 
