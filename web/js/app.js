@@ -152,7 +152,38 @@ function applyStaticText() {
   $$("[data-t]").forEach((el) => (el.textContent = t(el.dataset.t)));
   $$("[data-sub]").forEach((el) => { el.textContent = lang === "te" ? STRINGS.en[el.dataset.sub] : ""; el.hidden = lang !== "te"; });
   $("#brand").textContent = CFG.TITLE || "DM Puram";
+  renderInstall();
 }
+
+// ───────── install the app (home screen) ─────────
+const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+function renderInstall() {
+  const bar = $("#installBar");
+  if (!bar) return;
+  const snoozed = Date.now() < (store.get("installSnooze", 0) || 0);
+  const evt = window.__installEvt;
+  const ios = isIOS() && !evt;
+  if (isStandalone() || snoozed || (!evt && !ios)) { bar.hidden = true; return; }
+  bar.hidden = false;
+  bar.innerHTML = `
+    <img src="icon-192.png" alt="" width="44" height="44">
+    <div class="txt"><b>${esc(t("install_title"))}</b><span>${esc(ios ? t("install_ios") : t("install_sub"))}</span></div>
+    ${ios ? "" : `<button class="primary" type="button" id="installBtn">${esc(t("install_btn"))}</button>`}
+    <button class="x" type="button" id="installX" aria-label="${esc(t("close"))}">${icon("x", "width:18px;height:18px")}</button>`;
+  $("#installBtn")?.addEventListener("click", async () => {
+    const e = window.__installEvt;
+    if (!e) return;
+    e.prompt();
+    const { outcome } = await e.userChoice;
+    window.__installEvt = null;
+    if (outcome !== "accepted") store.set("installSnooze", Date.now() + 3 * 864e5);
+    renderInstall();
+  });
+  $("#installX").addEventListener("click", () => { store.set("installSnooze", Date.now() + 3 * 864e5); renderInstall(); });
+}
+window.addEventListener("installready", renderInstall);
+window.addEventListener("appinstalled", () => { window.__installEvt = null; renderInstall(); toast(t("installed")); });
 $("#langBtn").addEventListener("click", () => {
   lang = lang === "te" ? "en" : "te";
   store.set("lang", lang);
