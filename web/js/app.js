@@ -196,6 +196,7 @@ async function viewSearch() {
     </div>` : ""}
     <div class="row small muted" style="justify-content:space-between;margin:4px 2px 8px">
       <span id="count"></span>
+      <a class="btn small" href="#/print" style="min-height:32px;padding:4px 10px;font-size:13px">🖨 ${esc(t("walk_list"))}</a>
       ${isSuper() ? `<button class="small" id="csvBtn">⬇ ${esc(t("export_csv"))}</button>` : ""}
     </div>
     <ul class="vlist" id="list"></ul>
@@ -258,6 +259,48 @@ async function viewSearch() {
     load(true);
   });
   load(true);
+}
+
+// ───────── printable walk list (uses the current Voters filters) ─────────
+async function viewPrint() {
+  setTab("search");
+  main.innerHTML = `<p class="center muted">…</p>`;
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await applyFilters(sb.from("voters").select(VOTER_COLS), filters).order("serial").range(from, from + 999);
+    if (error) return fail(error);
+    rows.push(...data);
+    if (data.length < 1000) break;
+  }
+  const desc = [filters.hamlet ? hamletName(Number(filters.hamlet)) : t("all_hamlets"),
+    filters.lean ? (filters.lean === "ours" ? t("ours") : t("lean_" + filters.lean)) : "",
+    filters.status ? t("st_" + filters.status) : "", filters.q ? `"${filters.q}"` : ""].filter(Boolean).join(" · ");
+  const leanShort = { strong: "✓✓", leaning: "✓", undecided: "?", opposed: "✗", unknown: "" };
+  let lastHouse = null;
+  const body = rows.map((v) => {
+    const key = `${v.hamlet_id}|${v.house_no}`;
+    const newHouse = key !== lastHouse; lastHouse = key;
+    return `<tr class="${newHouse ? "hs" : ""}">
+      <td>${v.serial}</td><td>${newHouse ? esc(v.house_no || "") : ""}</td>
+      <td><b>${esc(v.name)}</b><div class="pm">${esc(t("rel_" + (v.relation_type || "other")))}: ${esc(v.relation_name || "")}</div></td>
+      <td>${esc(v.age ?? "")}${v.gender ? " " + v.gender : ""}</td><td class="pm">${esc(v.epic || "")}</td>
+      <td>${esc(v.phone || "")}</td><td class="c">${leanShort[v.leaning] || ""}</td>
+      <td class="c">${v.contacted ? "☑" : "☐"}</td><td class="c">${v.slip_delivered ? "☑" : "☐"}</td><td></td></tr>`;
+  }).join("");
+  main.innerHTML = `
+    <div class="noprint row" style="justify-content:space-between;margin-bottom:10px">
+      <a class="btn small" href="#/">← ${esc(t("back"))}</a>
+      <button class="primary" onclick="window.print()">🖨 ${esc(t("print"))}</button>
+    </div>
+    <div class="printsheet">
+      <h1>${esc(CFG.TITLE || "DM Puram")} · ${esc(t("walk_list"))}</h1>
+      <p class="small">${esc(desc)} · ${rows.length} ${esc(t("results"))} · ${esc(fmtTime(new Date().toISOString()))} · ${esc(me.full_name || me.username)}</p>
+      <p class="small muted">${esc(t("support"))}: ✓✓ ${esc(t("lean_strong"))} · ✓ ${esc(t("lean_leaning"))} · ? ${esc(t("lean_undecided"))} · ✗ ${esc(t("lean_opposed"))}</p>
+      <div class="tablewrap"><table class="walk">
+        <thead><tr><th>#</th><th>🏠</th><th>${esc(t("name"))}</th><th>${esc(t("age"))}</th><th>${esc(t("epic"))}</th><th>${esc(t("phone"))}</th><th>${esc(t("support"))}</th><th>☎</th><th>🧾</th><th>${esc(t("notes"))}</th></tr></thead>
+        <tbody>${body || `<tr><td colspan="10">${esc(t("no_results"))}</td></tr>`}</tbody>
+      </table></div>
+    </div>`;
 }
 
 async function exportCsv() {
@@ -717,6 +760,7 @@ function route() {
   if (h.startsWith("/poll")) return viewPoll();
   if (h.startsWith("/dash")) return viewDash();
   if (h.startsWith("/team")) return viewTeam();
+  if (h.startsWith("/print")) return viewPrint();
   return viewSearch();
 }
 window.addEventListener("hashchange", route);

@@ -42,6 +42,7 @@ export const STRINGS = {
     set_support_first: "Choose and save a support level first", slips_delivered: "Slips delivered", of_target: "Of our vote target",
     target: "Target", worker_progress: "Worker progress", assigned_n: "Assigned", targets: "Hamlet vote targets",
     targets_help: "How many votes we aim to win in each hamlet. The dashboard compares 'ours' against this.",
+    walk_list: "Walk list", print: "Print / Save PDF",
     logout: "Sign out", logout_q: "Sign out?",
   },
   te: {
@@ -86,6 +87,7 @@ export const STRINGS = {
     set_support_first: "ముందు మద్దతు ఎంచుకుని సేవ్ చేయండి", slips_delivered: "స్లిప్‌లు ఇచ్చినవి", of_target: "మన ఓట్ల లక్ష్యంలో",
     target: "లక్ష్యం", worker_progress: "కార్యకర్తల ప్రగతి", assigned_n: "కేటాయించినవి", targets: "గ్రామాల వారీ ఓట్ల లక్ష్యం",
     targets_help: "ప్రతి గ్రామంలో ఎన్ని ఓట్లు గెలవాలనుకుంటున్నాం. డాష్‌బోర్డ్ 'మనవాళ్ళు'ను దీనితో పోలుస్తుంది.",
+    walk_list: "ఇంటింటి జాబితా", print: "ప్రింట్ / PDF సేవ్",
     logout: "లాగ్ అవుట్", logout_q: "లాగ్ అవుట్ చేయాలా?",
   },
 };

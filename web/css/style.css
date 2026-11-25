@@ -134,3 +134,22 @@ tfoot td { font-weight: 700; }
 .hist li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
 .pill-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hamlet-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 8px; }
+
+/* walk list */
+table.walk td, table.walk th { text-align: left; white-space: normal; padding: 5px 6px; vertical-align: top; }
+table.walk td.c { text-align: center; font-size: 16px; }
+table.walk .pm { font-size: 12px; color: var(--muted); }
+table.walk tr.hs td { border-top: 2px solid #9aa59f; }
+table.walk th:first-child, table.walk td:first-child { min-width: 0; width: 1%; }
+table.walk td:nth-child(2), table.walk td:nth-child(4), table.walk td:nth-child(5) { white-space: nowrap; }
+table.walk td:last-child { min-width: 90px; width: 22%; }
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  header#top, nav#tabs, .noprint, #toast { display: none !important; }
+  body { background: #fff; }
+  main { max-width: none; padding: 0; }
+  .tablewrap { border: 0; overflow: visible; }
+  table.walk { font-size: 11px; }
+  table.walk tr { break-inside: avoid; }
+  table.walk thead { display: table-header-group; }
+}
