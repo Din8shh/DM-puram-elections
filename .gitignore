@@ -1,0 +1,16 @@
+# Voter data is personal information. Never commit it (this repository is public).
+data/
+*.pdf
+voters*.json
+review*.csv
+photos/
+*.zip
+
+.env
+.env.*
+node_modules/
+__pycache__/
+.DS_Store
+scripts/extract/tessdata/
+scripts/extract/raw/
+scripts/extract/out/
