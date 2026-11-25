@@ -87,12 +87,18 @@ const leanChip = (l) => (l && l !== "unknown" ? supPill(l, "sm") : "");
 const loading = `<p class="center muted" style="padding:40px 0">…</p>`;
 
 let toastTimer;
-function toast(msg, isErr = false) {
+function toast(msg, isErr = false, action = null) {
   const el = $("#toast");
   el.textContent = msg;
-  el.className = "show" + (isErr ? " err" : "");
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "toast-act"; b.textContent = action.label;
+    b.addEventListener("click", () => { el.className = ""; action.run(); }, { once: true });
+    el.append(b);
+  }
+  el.className = "show" + (isErr ? " err" : "") + (action ? " act" : "");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.className = ""), isErr ? 4000 : 1800);
+  toastTimer = setTimeout(() => (el.className = ""), isErr ? 4000 : action ? 6000 : 1800);
 }
 function fail(error) {
   console.error(error);
@@ -537,6 +543,7 @@ async function viewVoter(serial, openVisit = false) {
         ${sc.map((l) => `<button type="button" class="sup c-${l} ${v.leaning === l ? "on" : ""}" data-l="${l}" aria-pressed="${v.leaning === l}">${bars(LEVEL[l])}<span class="lbl">${esc(t("lean_" + l))}</span></button>`).join("")}
       </div>
       ${lang === "te" ? `<div class="suplabels en ${sc.length === 4 ? "four" : ""}">${sc.map((l) => `<span>${esc(STRINGS.en["lean_" + l])}</span>`).join("")}</div>` : ""}
+      ${v.leaning && v.leaning !== "unknown" ? `<div class="muted" style="font-size:13px;margin-top:8px">${esc(t("tap_clear"))}${sub("tap_clear")}</div>` : ""}
     </div>
 
     ${house?.length ? `<div class="card" style="margin-top:12px">
@@ -616,9 +623,19 @@ async function viewVoter(serial, openVisit = false) {
   $("#backBtn").addEventListener("click", () => (history.length > 1 ? history.back() : (location.hash = "#/voters")));
   $("#supGrid").addEventListener("click", async (e) => {
     const b = e.target.closest("button[data-l]");
-    if (!b || b.dataset.l === v.leaning) return;
-    // Choosing a support level means someone spoke to them.
-    if (await update({ leaning: b.dataset.l, contacted: true })) reload();
+    if (!b) return;
+    const before = { leaning: v.leaning || "unknown", contacted: !!v.contacted };
+    // Tapping the chosen level again clears it. Choosing a level means someone spoke to them.
+    const patch = b.dataset.l === v.leaning ? { leaning: "unknown" } : { leaning: b.dataset.l, contacted: true };
+    const { error: err } = await sb.from("voters").update(patch).eq("serial", v.serial);
+    if (err) return fail(err);
+    reload();
+    toast(patch.leaning === "unknown" ? t("sup_cleared") : t("saved"), false, { label: t("undo"), run: async () => {
+      const { error: e2 } = await sb.from("voters").update(before).eq("serial", v.serial);
+      if (e2) return fail(e2);
+      toast(t("undone"));
+      if (location.hash.startsWith(`#/v/${v.serial}`)) reload();
+    } });
   });
   const houseUpdate = async (patch) => {
     const { error: err } = await sb.from("voters").update(patch).eq("hamlet_id", v.hamlet_id).eq("house_no", v.house_no);
@@ -722,8 +739,8 @@ function openVisitSheet(v) {
   });
   $("#visLean").addEventListener("click", (e) => {
     const b = e.target.closest("[data-l]"); if (!b) return;
-    st.lean = b.dataset.l;
-    $$("#visLean [data-l]").forEach((x) => x.classList.toggle("on", x === b));
+    st.lean = st.lean === b.dataset.l ? "unknown" : b.dataset.l;
+    $$("#visLean [data-l]").forEach((x) => x.classList.toggle("on", x.dataset.l === st.lean));
   });
   $("#fuOpts").addEventListener("click", (e) => {
     const b = e.target.closest("[data-fu]"); if (!b) return;
