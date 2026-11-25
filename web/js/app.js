@@ -646,7 +646,7 @@ async function viewTeam() {
     </ul>`;
 
   const callFn = async (body) => {
-    const { data, error } = await sb.functions.invoke("admin-users", { body });
+    const { data, error } = await sb.functions.invoke(CFG.ADMIN_FUNCTION || "admin-users", { body });
     if (error) {
       let msg = error.message;
       try { msg = (await error.context.json()).error || msg; } catch { /* keep */ }
