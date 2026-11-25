@@ -114,6 +114,8 @@ let team = [];              // profiles
 let scopeMine = false;      // a worker with voters assigned sees "my voters" on Today and Follow-ups
 const photoCache = new Map();
 const isSuper = () => me?.role === "superadmin";
+const isDesk = () => matchMedia("(min-width: 1000px)").matches;
+const teamPeople = () => team;
 const isAdmin = () => me?.role === "admin" || isSuper();
 const canAssign = () => isAdmin() || me?.role === "incharge";
 const canTransport = canAssign;
@@ -245,6 +247,7 @@ function setFilters(patch) {
 function applyFilters(qb, f) {
   if (f.hamlet) qb = qb.eq("hamlet_id", Number(f.hamlet));
   if (f.lean === "ours") qb = qb.in("leaning", ["strong", "leaning"]);
+  else if (f.lean === "open") qb = qb.in("leaning", ["undecided", "unlikely", "unknown"]);
   else if (f.lean) qb = qb.eq("leaning", f.lean);
   if (f.gender) qb = qb.eq("gender", f.gender);
   if (f.age && AGE_FILTER[f.age]) qb = qb.gte("age", AGE_FILTER[f.age][0]).lte("age", AGE_FILTER[f.age][1]);
@@ -284,7 +287,7 @@ document.addEventListener("click", (e) => {
   if (!a) return;
   e.preventDefault();
   setFilters(JSON.parse(a.dataset.go));
-  location.hash = "#/voters";
+  location.hash = a.dataset.then || "#/voters";
 });
 
 // ───────── Today ─────────
@@ -379,6 +382,7 @@ function voterItem(v, url) {
 
 async function viewSearch(params = "") {
   setTab("voters");
+  if (isDesk() && canAssign()) return viewVotersDesk(params);
   const opt = (val, label, cur) => `<option value="${esc(val)}" ${String(cur) === String(val) ? "selected" : ""}>${esc(label)}</option>`;
   const numMode = params.includes("num") || store.get("numMode", false);
   const chip = (key, val, label) => `<button class="chip-btn ${String(filters[key]) === String(val) ? "on" : ""}" data-chip="${key}" data-val="${esc(val)}">${esc(label)}</button>`;
@@ -898,6 +902,7 @@ async function viewTeam() {
   const isIdle = (p) => p.active && ["worker", "incharge"].includes(p.role) && (!lastAt[p.id] || Date.now() - new Date(lastAt[p.id]) > 48 * 3600e3);
   const idle = people.filter(isIdle);
   const n = (r) => people.filter((p) => p.role === r || (r === "admin" && p.role === "superadmin")).length;
+  if (isDesk()) return viewTeamDesk({ people, statBy, lastAt, isIdle, idle, roleF, n });
   main.innerHTML = `
     <div class="row between" style="margin-bottom:12px">
       <h1 style="margin:0">${esc(t("tab_team"))}<span class="en">${people.length} ${esc(STRINGS.en.team_people)}</span></h1>
@@ -1517,24 +1522,28 @@ const DASH_TABS = [
   ["houses", "Households", "ఇళ్ళు"], ["reach", "Who to reach", "ఎవరిని చేరుకోవాలి"], ["team", "Team progress", "టీమ్ పురోగతి"],
 ];
 let dashCache = null; // { at, all, team }
-async function viewAnalytics(tab = "overview", fresh = false) {
-  if (!DASH_TABS.some(([k]) => k === tab)) tab = "overview";
+async function viewAnalytics(tab = "overview", fresh = false, arg = "") {
+  if (tab === "hamlet" && !hamlets.some((h) => String(h.id) === String(arg))) tab = "hamlets";
+  if (tab !== "hamlet" && !DASH_TABS.some(([k]) => k === tab)) tab = "overview";
   setTab("dashboard");
   main.classList.add("wide");
   if (!isAdmin()) { main.innerHTML = `<p class="card">${esc(t("no_access"))}</p>`; return; }
   if (fresh || !dashCache || Date.now() - dashCache.at > 60000) {
     if (!dashCache) main.innerHTML = loading;
     try {
-      const [all, { data: team }] = await Promise.all([
-        fetchAll(() => sb.from("voters").select("serial,hamlet_id,gender,age,house_no,leaning,contacted,follow_up_on,away,voted,assigned_to,slip_delivered")),
+      const since = new Date(Date.now() - 14 * 86400e3).toISOString();
+      const [all, { data: team }, { data: acts }] = await Promise.all([
+        fetchAll(() => sb.from("voters").select("serial,name,hamlet_id,gender,age,house_no,leaning,contacted,follow_up_on,away,voted,assigned_to,slip_delivered")),
         sb.rpc("assignment_stats"),
+        sb.from("activity").select("voter_serial,user_id,at,action,detail").gte("at", since).order("at", { ascending: false }).limit(5000),
+        loadTeam(),
       ]);
-      dashCache = { at: Date.now(), all, team: team || [] };
+      dashCache = { at: Date.now(), all, team: team || [], acts: acts || [] };
     } catch (err) { main.innerHTML = ""; return fail(err); }
   }
   if (location.hash && !/^#\/(dashboard|analysis)/.test(location.hash)) return;
-  const { all, team } = dashCache;
-  const hf = store.get("anHamlet", "");
+  const { all, team, acts } = dashCache;
+  const hf = tab === "hamlet" ? String(arg) : tab === "overview" ? "" : store.get("anHamlet", "");
   const rows = hf ? all.filter((v) => String(v.hamlet_id) === String(hf)) : all;
   const S = summarize(rows);
   const women = rows.filter((v) => v.gender === "F"), men = rows.filter((v) => v.gender === "M");
@@ -1671,7 +1680,7 @@ async function viewAnalytics(tab = "overview", fresh = false) {
       <div class="tablewrap flat"><table class="an">
         <thead><tr><th>Hamlet</th><th class="n">Voters</th><th class="n">Women</th><th class="n">18–29</th><th class="n">60+</th><th class="n">Visited</th><th style="min-width:160px">Support</th><th class="n">Expected</th><th class="n">Target</th><th class="n">Still open</th><th class="n">Not assigned</th><th class="n">Away</th></tr></thead>
         <tbody>${[...hamRows].sort((a, b) => b.s.persu - a.s.persu).map((r) => `<tr>
-          <td><a href="#/voters" ${goAttr({ hamlet: String(r.h.id) })}>${esc(hamletName(r.h.id))}</a></td>
+          <td><a href="#/dashboard/hamlet/${r.h.id}">${esc(hamletName(r.h.id))}</a></td>
           <td class="n">${nf(r.s.n)}</td><td class="n">${pct(r.fem, r.s.n)}%</td><td class="n">${pct(r.yth, r.s.n)}%</td><td class="n">${pct(r.old, r.s.n)}%</td>
           <td class="n"><span class="heat" style="--p:${pct(r.s.visited, r.s.n)}">${pct(r.s.visited, r.s.n)}%</span></td>
           <td>${miniStack(r.s)}</td>
@@ -1729,8 +1738,107 @@ async function viewAnalytics(tab = "overview", fresh = false) {
       </tbody></table></div>` : `<p class="muted">No voters assigned yet. Assign voters from the Team page.</p>`}
       <div class="row" style="gap:12px;margin-top:10px"><a class="small" href="#/team">Manage team →</a><a class="small" href="#/activity">All updates →</a></div></section>`,
   };
+  // ── laptop overview: are we winning? ──
+  const today = todayIST();
+  const dayStart = new Date(today + "T00:00:00+05:30").getTime();
+  const lastAt = {};
+  acts.forEach((a) => { if (a.user_id && !lastAt[a.user_id]) lastAt[a.user_id] = a.at; });
+  const field = teamPeople().filter((p) => p.active && ["worker", "incharge"].includes(p.role));
+  const activeToday = field.filter((p) => lastAt[p.id] && new Date(lastAt[p.id]).getTime() >= dayStart).length;
+  const quiet = field.filter((p) => !lastAt[p.id] || Date.now() - new Date(lastAt[p.id]) > 72 * 3600e3);
+  const overdue = rows.filter((v) => v.follow_up_on && v.follow_up_on < today).length;
+  const dueToday = rows.filter((v) => v.follow_up_on === today).length;
+  const noWorker = rows.filter((v) => !v.assigned_to).length;
+  const gap = Math.max(0, Math.round(target - S.exp));
+  const sbar = (s, h = 10) => `<div class="dk-bar" style="height:${h}px">${supOrder().map((l) => s[l] ? `<span style="width:${(s[l] / s.n) * 100}%;background:${SUP_COLOR[l]}" title="${esc(t("lean_" + l))}: ${s[l]}"></span>` : "").join("")}</div>`;
+  const legend = (s) => `<div class="dk-legend">${supOrder().map((l) => `<a href="#/voters" ${goAttr({ lean: l, ...(hf ? { hamlet: hf } : {}) })}><i style="background:${SUP_COLOR[l]}"></i>${esc(t("lean_" + l))} <b class="num">${nf(s[l])}</b> <span class="muted num">${pct(s[l], s.n)}%</span></a>`).join("")}</div>`;
+  const hamGo = (id) => `#/dashboard/hamlet/${id}`;
+  const card = (val, en, te, note, href, cls = "", go = null) => `<a class="card dk-kpi ${cls}" href="${href}" ${go ? goAttr(go) : ""}><div class="num">${val}</div><b>${L(en, te)}</b><span class="en">${note}</span></a>`;
+  const hero = `<div class="card dk-hero">
+      <div class="lbl">${L("Expected votes", "అంచనా ఓట్లు")}</div>
+      <div class="row" style="align-items:baseline;gap:10px"><span class="num big">${nf(Math.round(S.exp))}</span>
+        <span class="num">${target ? `of ${nf(target)} target · ${gap ? `need ${nf(gap)} more` : "on track"}` : "no target set yet"}</span></div>
+      <div class="track"><span style="width:${target ? Math.min(100, (S.exp / target) * 100) : 0}%"></span></div>
+      <div class="small">Sure counts 90% · Likely 70% · 50-50 50%${hasUnlikely ? " · Unlikely 25%" : ""} · Against 5%</div>
+    </div>`;
+  const kpiRow = (scope) => `<div class="dk-kpis">${hero}
+      ${card(pct(S.visited, S.n) + "%", "Visited", "కలిశాం", `${nf(S.visited)} of ${nf(S.n)} · ${nf(S.unvisited)} to go`, "#/voters", "", { ...scope, status: "not_contacted" })}
+      ${card(nf(S.persu), "Still open", "ఇంకా తేలని వారు", `50-50 ${nf(S.undecided)}${hasUnlikely ? ` · Unlikely ${nf(S.unlikely)}` : ""} · not known ${nf(S.unknown)}`, "#/voters", "", { ...scope, lean: "open" })}
+      ${card(nf(overdue), "Follow-ups overdue", "గడువు దాటిన ఫాలో-అప్‌లు", `${nf(dueToday)} due today`, "#/voters", overdue ? "warn" : "", { ...scope, status: "follow_up_due" })}
+      ${scope.hamlet ? card(nf(noWorker), "No worker yet", "వర్కర్ లేని వారు", "assign them to someone", "#/voters", noWorker ? "warn" : "", { ...scope, status: "unassigned" })
+        : card(`${activeToday}<small>/${field.length}</small>`, "Team active today", "ఈరోజు పని చేసిన వారు", `${quiet.length} quiet for 3+ days`, "#/team")}
+    </div>`;
+  const winRows = [...hamRows].filter((r) => r.s.n).sort((a, b) => (Math.max(0, b.target - b.s.exp) - Math.max(0, a.target - a.s.exp)) || b.s.persu - a.s.persu);
+  sec.win = `<section class="card dk-sec">
+      <div class="dk-sec-h"><h2>${L("Where to win", "ఎక్కడ గెలవాలి")}</h2><span class="en in">sorted by gap to target · click a hamlet to open it</span></div>
+      <div class="tablewrap flat"><table class="an dk-t">
+        <thead><tr><th>Hamlet</th><th class="n">Voters</th><th class="n">Visited</th><th style="min-width:150px">Support</th><th class="n">Expected</th><th class="n">Target</th><th class="n">Gap</th><th class="n">Still open</th></tr></thead>
+        <tbody>${winRows.map((r) => { const g = r.target ? Math.round(r.target - r.s.exp) : null; return `<tr class="go" data-href="${hamGo(r.h.id)}">
+          <td><a href="${hamGo(r.h.id)}">${esc(hamletName(r.h.id))}</a></td><td class="n">${nf(r.s.n)}</td>
+          <td class="n"><span class="heat" style="--p:${pct(r.s.visited, r.s.n)}">${pct(r.s.visited, r.s.n)}%</span></td><td>${sbar(r.s)}</td>
+          <td class="n">${nf(Math.round(r.s.exp))}</td><td class="n">${r.target ? nf(r.target) : "—"}</td>
+          <td class="n ${g > 0 ? "bad" : g !== null ? "ok" : ""}">${g === null ? "—" : g > 0 ? "−" + nf(g) : "+" + nf(-g)}</td><td class="n">${nf(r.s.persu)}</td></tr>`; }).join("")}</tbody>
+      </table></div>
+    </section>`;
+  const todoItem = (n, en, te, note, href, tone, ic, go = null) => n ? `<a class="dk-todo" href="${href}" ${go ? goAttr(go) : ""}><span class="dot ${tone}">${icon(ic)}</span><span class="grow"><b>${nf(n)} ${L(en, te)}</b><span class="en">${note}</span></span>${icon("chev", "width:18px;height:18px;color:var(--muted)")}</a>` : "";
+  const bigOpenAll = hs.filter((h) => h.length >= 5 && summarize(h).persu >= Math.ceil(h.length / 2)).length;
+  const todos = [
+    todoItem(overdue, "follow-ups overdue", "ఫాలో-అప్‌లు గడువు దాటాయి", "promised visits not done yet", "#/voters", "late", "cal", { status: "follow_up_due" }),
+    todoItem(noWorker, "voters have no worker", "ఓటర్లకు వర్కర్ లేరు", "assign them so someone visits", "#/voters", "warn", "userplus", { status: "unassigned" }),
+    todoItem(quiet.length, "people quiet for 3+ days", "మంది 3+ రోజులుగా పని చేయలేదు", esc(quiet.slice(0, 4).map((p) => p.full_name || p.username).join(", ")), "#/team", "warn", "clock"),
+    todoItem(bigOpenAll, "big houses still open", "పెద్ద ఇళ్ళు ఇంకా తేలలేదు", "5+ voters each · send a senior person", "#/dashboard/houses", "info", "home"),
+    todoItem(S.away, "voters live outside", "మంది ఊరిలో లేరు", "call early to plan for poll day", "#/voters", "info", "phone", { status: "away" }),
+  ].join("");
+  sec.todo = `<section class="card dk-sec"><div class="dk-sec-h"><h2>${L("To do now", "ఇప్పుడు చేయాల్సినవి")}</h2></div>${todos || `<p class="muted" style="padding:0 16px 16px">Nothing urgent.</p>`}</section>`;
+  const grpRow = (en, te, list, go) => { const s = summarize(list); return `<a class="dk-grp" href="#/voters" ${goAttr({ ...go, ...(hf ? { hamlet: hf } : {}) })}><span><b>${L(en, te)}</b><span class="en">${nf(s.n)} voters · ${pct(s.visited, s.n)}% visited</span></span>${sbar(s, 12)}<span class="num r"><b>${pct(s.ours, s.n)}%</b><span class="en">with us</span></span></a>`; };
+  sec.groups = `<section class="card dk-sec"><div class="dk-sec-h"><h2>${L("Support by group", "వర్గాల వారీగా మద్దతు")}</h2><a class="small" href="#/dashboard/people">More →</a></div>
+      ${grpRow("Women", "మహిళలు", women, { gender: "F" })}${grpRow("Men", "పురుషులు", men, { gender: "M" })}
+      ${grpRow("Age 18–29", "వయసు 18–29", rows.filter((v) => v.age >= 18 && v.age <= 29), { age: "youth" })}${grpRow("Age 60+", "వయసు 60+", rows.filter((v) => v.age >= 60), { age: "senior" })}</section>`;
+  const nameBy = Object.fromEntries(all.map((v) => [v.serial, v]));
+  const recent = acts.filter((a) => !hf || String(nameBy[a.voter_serial]?.hamlet_id) === hf).slice(0, 8);
+  sec.latest = `<section class="card dk-sec"><div class="dk-sec-h"><h2>${L("Latest updates", "తాజా మార్పులు")}</h2><a class="small" href="#/activity">All →</a></div>
+      ${recent.length ? `<ul class="dk-feed">${recent.map((a) => `<li><span class="time">${esc(relTime(a.at))}</span><span><b>${esc(personName(a.user_id) || "—")}</b> · ${esc(describe(a))} · <a href="#/v/${a.voter_serial}">${esc(nameBy[a.voter_serial]?.name || "")} #${a.voter_serial}</a></span></li>`).join("")}</ul>` : `<p class="muted" style="padding:0 16px 16px">No updates in the last 14 days.</p>`}</section>`;
+
+  // ── one hamlet ──
+  let hamletBody = "";
+  if (tab === "hamlet") {
+    const hid = Number(hf);
+    const rank = winRows.findIndex((r) => r.h.id === hid);
+    const incharges = teamPeople().filter((p) => p.role === "incharge" && (p.hamlet_ids || []).includes(hid));
+    const groups = [["Women", "మహిళలు", women, { gender: "F" }], ["Men", "పురుషులు", men, { gender: "M" }],
+      ...AGE_BANDS.map((b) => [`Age ${b.en}`, `వయసు ${b.te}`, rows.filter((v) => inBand(v, b)), { age: b.k }])];
+    const byWorker = new Map();
+    for (const v of rows) { const k = v.assigned_to || ""; if (!byWorker.has(k)) byWorker.set(k, []); byWorker.get(k).push(v); }
+    const wk = [...byWorker.entries()].filter(([k]) => k).map(([k, list]) => ({ id: k, s: summarize(list), fu: list.filter((v) => v.follow_up_on && v.follow_up_on < today).length }))
+      .sort((a, b) => pct(a.s.visited, a.s.n) - pct(b.s.visited, b.s.n));
+    const bigHere = hs.filter((h) => h.length >= 4).map((h) => ({ h, s: summarize(h) })).filter((x) => x.s.persu >= Math.ceil(x.s.n / 2))
+      .sort((a, b) => b.s.persu - a.s.persu || b.s.n - a.s.n).slice(0, 8);
+    hamletBody = `${kpiRow({ hamlet: hf })}
+      <section class="card dk-sec" style="padding-bottom:16px"><div class="dk-sec-h"><h2>${L("Support in this hamlet", "ఈ గ్రామంలో మద్దతు")}</h2><span class="en in">${nf(S.n)} voters</span></div>
+        <div style="padding:0 16px">${sbar(S, 20)}${legend(S)}</div></section>
+      <div class="dk-3">
+        <section class="card dk-sec"><div class="dk-sec-h"><h2>${L("Who is not decided yet", "ఇంకా తేల్చుకోని వారు")}</h2><span class="en in">many "not known" means visit them first</span></div>
+          <div class="tablewrap flat"><table class="an dk-t"><thead><tr><th>Group</th><th class="n">Voters</th><th class="n">Visited</th><th style="min-width:120px">Support</th><th class="n">Not known</th></tr></thead><tbody>
+          ${groups.map(([en, te, list, go]) => { const s = summarize(list); return s.n ? `<tr class="go" ${goAttr({ ...go, hamlet: hf })}><td><a href="#/voters" ${goAttr({ ...go, hamlet: hf })}>${L(en, te)}</a></td><td class="n">${nf(s.n)}</td><td class="n">${pct(s.visited, s.n)}%</td><td>${sbar(s)}</td><td class="n">${pct(s.unknown, s.n)}%</td></tr>` : ""; }).join("")}
+          </tbody></table></div></section>
+        <div class="dk-side"><section class="card dk-sec"><div class="dk-sec-h"><h2>${L("Team in this hamlet", "ఈ గ్రామంలో బృందం")}</h2></div>
+          <div class="tablewrap flat"><table class="an dk-t"><thead><tr><th>Person</th><th class="n">Voters</th><th class="n">Visited</th><th class="n">Overdue</th><th>Last active</th></tr></thead><tbody>
+          ${wk.map((w) => `<tr><td><a href="#/activity?u=${esc(w.id)}">${esc(personName(w.id) || "—")}</a></td><td class="n">${nf(w.s.n)}</td><td class="n">${pct(w.s.visited, w.s.n)}%</td><td class="n ${w.fu ? "bad" : ""}">${nf(w.fu)}</td><td class="${lastAt[w.id] && Date.now() - new Date(lastAt[w.id]) < 72 * 3600e3 ? "" : "bad"}">${lastAt[w.id] ? esc(relTime(lastAt[w.id])) : esc(t("never"))}</td></tr>`).join("")}
+          ${noWorker ? `<tr class="dk-warnrow"><td><b>${L("No worker yet", "వర్కర్ లేరు")}</b></td><td class="n">${nf(noWorker)}</td><td colspan="3"><a href="#/voters" ${goAttr({ hamlet: hf, status: "unassigned" })}>Assign these →</a></td></tr>` : ""}
+          ${!wk.length && !noWorker ? `<tr><td colspan="5" class="muted">Nobody assigned yet.</td></tr>` : ""}
+          </tbody></table></div></section>
+        <section class="card dk-sec"><div class="dk-sec-h"><h2>${L("Big houses still open", "ఇంకా తేలని పెద్ద ఇళ్ళు")}</h2><span class="en in">one visit reaches many votes</span></div>
+          ${bigHere.length ? bigHere.map(({ h, s }) => `<a class="dk-todo" href="#/voters" ${goAttr({ q: h[0].house_no, hamlet: hf })}><span class="dot info num">${s.n}</span><span class="grow"><b>${esc(STRINGS.en.house)} ${esc(h[0].house_no)}</b><span class="en">${s.visited} of ${s.n} visited · ${s.persu} still open</span></span>${sbar(s, 8)}</a>`).join("") : `<p class="muted" style="padding:0 16px 16px">None right now.</p>`}
+        </section></div>
+      </div>
+      ${sec.latest}`;
+    hamletBody = `<div class="dk-crumb"><a href="#/dashboard">${L("Overview", "సారాంశం")}</a> › <a href="#/dashboard/hamlets">${L("Hamlets", "గ్రామాలు")}</a></div>` + hamletBody;
+    sec.hamletHead = `<span class="en">${nf(S.n)} voters · ${nf(houses.size)} houses${incharges.length ? " · in-charge " + esc(incharges.map((x) => x.full_name || x.username).join(", ")) : ""}${rank >= 0 && target ? ` · gap rank ${rank + 1} of ${winRows.length}` : ""}</span>`;
+  }
+
   const body = {
-    overview: `${sec.kpis}${sec.insights}<div class="an-grid">${sec.support}${sec.topHamlets}</div><div class="an-grid">${sec.gender}${sec.pyramid}</div>`,
+    overview: `${kpiRow({})}<div class="dk-split">${sec.win}<div class="dk-side">${sec.todo}${sec.groups}</div></div>${sec.latest}${ins.length ? sec.insights : ""}`,
+    hamlet: hamletBody,
     people: `<div class="an-grid" style="margin-top:0">${sec.gender}${sec.pyramid}</div>${sec.agetable}`,
     hamlets: hf ? `<p class="card">Choose "All hamlets" above to compare hamlets.</p>` : sec.hamtable.replace('style="margin-top:12px"', ""),
     houses: sec.houses.replace('style="margin-top:12px"', 'style="margin-top:0"'),
@@ -1738,22 +1846,301 @@ async function viewAnalytics(tab = "overview", fresh = false) {
     team: sec.team,
   }[tab];
 
+  const heading = tab === "hamlet" ? `${esc(hamletName(Number(hf)))}${sec.hamletHead}`
+    : tab === "overview" ? `${L("Are we winning?", "మనం గెలుస్తున్నామా?")}<span class="en">${esc(t("all_hamlets"))} · ${nf(all.length)} voters</span>` : L("Dashboard", "డాష్‌బోర్డ్");
   main.innerHTML = `
     <div class="row between an-head">
-      <h1 style="margin:0">${L("Dashboard", "డాష్‌బోర్డ్")}</h1>
+      <h1 style="margin:0">${heading}</h1>
       <div class="row" style="gap:8px">
+        ${tab === "hamlet" ? `<a class="btn primary small" href="#/voters" ${goAttr({ hamlet: hf, lean: "open" })}>${L(`Open ${nf(S.persu)} still-open voters`, `${nf(S.persu)} తేలని ఓటర్లు`)}</a>
+        <a class="btn small" href="#/print" ${goAttr({ hamlet: hf, status: "not_contacted" })} data-then="#/print">${icon("print", "width:18px;height:18px")} ${esc(t("walk_list"))}</a>` : ""}
         <select id="anHamlet" style="width:auto">${opt("", t("all_hamlets"), hf)}${hamlets.map((h) => opt(h.id, hamletName(h.id), hf)).join("")}</select>
         <button type="button" id="anRefresh" class="noprint" title="Refresh">${icon("refresh", "width:18px;height:18px")}</button>
         <button type="button" id="anPrint" class="noprint">${icon("print", "width:18px;height:18px")} ${esc(t("print"))}</button>
       </div>
     </div>
-    <nav class="dtabs noprint" aria-label="Dashboard sections">${DASH_TABS.map(([k, en, te]) => `<a href="#/dashboard/${k}" class="${k === tab ? "on" : ""}">${lang === "te" ? esc(te) : esc(en)}</a>`).join("")}</nav>
+    <nav class="dtabs noprint" aria-label="Dashboard sections">${DASH_TABS.map(([k, en, te]) => `<a href="#/dashboard/${k}" class="${k === tab || (tab === "hamlet" && k === "hamlets") ? "on" : ""}">${lang === "te" ? esc(te) : esc(en)}</a>`).join("")}</nav>
     <div class="dbody">${body}</div>
     <p class="small muted center">${esc(t("refreshed"))}: ${esc(fmtTime(new Date(dashCache.at).toISOString()))}</p>`;
 
-  $("#anHamlet").addEventListener("change", (e) => { store.set("anHamlet", e.target.value); viewAnalytics(tab); });
+  $("#anHamlet").addEventListener("change", (e) => {
+    const v = e.target.value;
+    if (tab === "overview" || tab === "hamlet") { location.hash = v ? `#/dashboard/hamlet/${v}` : "#/dashboard"; return; }
+    store.set("anHamlet", v); viewAnalytics(tab);
+  });
+  $$("tr.go[data-href]").forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest("a")) location.hash = tr.dataset.href; }));
   $("#anRefresh").addEventListener("click", () => viewAnalytics(tab, true));
   $("#anPrint").addEventListener("click", () => window.print());
+}
+
+// ───────── laptop: voters workspace (filter, select, assign) ─────────
+const DESK_PAGE = 50;
+const deskSel = new Set();
+async function viewVotersDesk(params = "") {
+  main.classList.add("wide");
+  const opt = (val, label, cur) => `<option value="${esc(val)}" ${String(cur) === String(val) ? "selected" : ""}>${esc(label)}</option>`;
+  const chip = (key, val, label) => `<button type="button" class="dk-chip ${String(filters[key]) === String(val) ? "on" : ""}" data-k="${key}" data-v="${esc(val)}">${label}</button>`;
+  const grp = (title, html) => `<div class="dk-fg"><div class="dk-fl">${title}</div><div class="dk-chips">${html}</div></div>`;
+  const people = team.filter((p) => p.active && p.role !== "superadmin");
+  const workerOpts = `<option value="">${esc(t("assign"))}…</option><option value="__none">${esc(t("nobody"))}</option>${people.map((p) => `<option value="${p.id}">${esc(p.full_name || p.username)}</option>`).join("")}`;
+  main.innerHTML = `
+    <div class="row between an-head">
+      <h1 style="margin:0">${esc(t("tab_voters"))}<span class="en" id="dkSub"></span></h1>
+      <label class="searchbox dk-search">
+        <span style="color:var(--brand)">${icon("search")}</span>
+        <input type="search" id="q" aria-label="${esc(t("search_ph"))}" placeholder="${esc(t("search_ph"))}" value="${esc(filters.q)}" autocomplete="off">
+      </label>
+    </div>
+    <div class="dk-work">
+      <aside class="card dk-rail" aria-label="Filters">
+        <div class="row between"><b>${L("Filters", "ఫిల్టర్లు")}</b><button type="button" class="ghost small" id="clearBtn" style="color:var(--brand)">${esc(t("clear_all"))}</button></div>
+        <div class="dk-fg"><div class="dk-fl">${esc(t("hamlet"))}</div><select id="fHamlet">${opt("", t("all_hamlets"), filters.hamlet)}${hamlets.map((h) => opt(h.id, hamletName(h.id), filters.hamlet)).join("")}</select></div>
+        ${grp(esc(t("support")), [chip("lean", "open", esc(t("lean_open"))), ...[...scale()].reverse().map((l) => chip("lean", l, `<i style="background:${SUP_COLOR[l]}"></i>${esc(t("lean_" + l))}`)), chip("lean", "unknown", `<i style="background:${SUP_COLOR.unknown}"></i>${esc(t("lean_unknown"))}`)].join(""))}
+        ${grp(L("Show only", "చూపించు"), ["not_contacted", "contacted", "follow_up_due", "unassigned", "away", "has_phone", "slip_pending", "transport", "review"].map((k) => chip("status", k, esc(t("st_" + k)))).join(""))}
+        ${grp(esc(t("gender")), chip("gender", "F", esc(t("women"))) + chip("gender", "M", esc(t("male"))))}
+        ${grp(L("Age", "వయసు"), [["first", "18–22"], ["young", "23–29"], ["a30", "30–44"], ["a45", "45–59"], ["senior", "60+"]].map(([k, l]) => chip("age", k, l)).join(""))}
+        <div class="dk-fg"><div class="dk-fl">${L("Everyone in this list", "ఈ జాబితాలో అందరూ")}</div>
+          <div class="row" style="gap:6px;flex-wrap:nowrap"><select id="bulkWorker" style="flex:1;min-width:0">${workerOpts}</select><button type="button" class="small" id="bulkAssign">${esc(t("assign"))}</button></div>
+          <div class="row" style="gap:6px;margin-top:8px"><a class="btn small" href="#/print">${icon("print", "width:18px;height:18px")} ${esc(t("walk_list"))}</a>${isSuper() ? `<button type="button" class="small" id="csvBtn">⬇ CSV</button>` : ""}</div>
+        </div>
+      </aside>
+      <section class="card dk-table">
+        <div class="dk-bulk" id="bulk" hidden>
+          <b id="selN"></b>
+          <span class="grow"></span>
+          <select id="selWorker" aria-label="${esc(t("assign"))}">${workerOpts}</select>
+          <label class="row" style="gap:6px;flex-wrap:nowrap">${esc(t("tab_follow"))} <input type="date" id="selDate" style="width:auto"></label>
+          <button type="button" class="small" id="selClear">${esc(t("close"))}</button>
+        </div>
+        <div class="tablewrap flat"><table class="an dk-t dk-vt">
+          <thead><tr><th style="width:36px"><input type="checkbox" id="selAll" aria-label="Select all on this page"></th><th>#</th><th>${esc(t("name"))}</th><th>${L("Age", "వయసు")}</th><th>${esc(STRINGS[lang].house || "House")}</th><th>${esc(t("hamlet"))}</th><th>${L("Worker", "వర్కర్")}</th><th>${esc(t("support"))}</th><th>${L("Visited", "కలిశాం")}</th><th>${esc(t("tab_follow"))}</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="10" class="muted center">…</td></tr></tbody>
+        </table></div>
+        <div class="row between small muted" style="padding:10px 14px"><span id="count" class="num"></span><span class="row" style="gap:8px"><button type="button" class="small" id="prev">←</button><span id="pageN" class="num"></span><button type="button" class="small" id="next">→</button></span></div>
+      </section>
+      <aside class="card dk-panel" id="panel" hidden></aside>
+    </div>`;
+
+  let offset = Number(store.get("dkOffset", 0)) || 0, total = 0, seq = 0, data = [], openSerial = null;
+  const today = todayIST();
+  const fuCell = (d) => !d ? "" : d < today ? `<span class="bad">${esc(fmtDay(d))}</span>` : d === today ? `<b>${esc(t("today"))}</b>` : esc(fmtDay(d));
+  const supCell = (l) => `<span class="dk-sup"><i style="background:${SUP_COLOR[l || "unknown"]}"></i>${esc(t("lean_" + (l || "unknown")))}</span>`;
+  const rowHtml = (v) => `<tr data-s="${v.serial}" class="${v.serial === openSerial ? "on" : ""}">
+      <td><input type="checkbox" data-pick="${v.serial}" ${deskSel.has(v.serial) ? "checked" : ""} aria-label="Select ${esc(v.name || "")}"></td>
+      <td class="num">${v.serial}</td><td><b>${esc(v.name || "—")}</b><span class="en">${esc(v.name_en || "")}</span></td>
+      <td class="num">${v.gender || ""} ${v.age || ""}</td><td class="num">${esc(v.house_no || "")}</td><td>${esc(hamletName(v.hamlet_id))}</td>
+      <td>${v.assigned_to ? esc(personName(v.assigned_to)) : `<span class="bad">${esc(t("nobody"))}</span>`}</td>
+      <td>${supCell(v.leaning)}</td><td>${v.voted ? esc(t("st_voted")) : v.contacted ? `${icon("check", "width:16px;height:16px;color:var(--brand)")} ${esc(v.contacted_at ? fmtShort(v.contacted_at) : "")}` : ""}</td><td>${fuCell(v.follow_up_on)}</td></tr>`;
+  const paintBulk = () => {
+    $("#bulk").hidden = !deskSel.size;
+    $("#selN").textContent = `${deskSel.size} ${lang === "te" ? "ఎంచుకున్నారు" : "selected"}`;
+    $("#selAll").checked = data.length > 0 && data.every((v) => deskSel.has(v.serial));
+  };
+  async function load() {
+    const my = ++seq;
+    let qb = sb.from("voters").select(VOTER_COLS, { count: "exact" });
+    qb = applyFilters(qb, filters).order("serial").range(offset, offset + DESK_PAGE - 1);
+    const { data: d, error, count } = await qb;
+    if (my !== seq) return;
+    if (error) return fail(error);
+    total = count ?? 0;
+    if (offset && offset >= total) { offset = 0; store.set("dkOffset", 0); return load(); }
+    data = d;
+    $("#rows").innerHTML = data.length ? data.map(rowHtml).join("") : `<tr><td colspan="10" class="empty">${esc(t("no_results"))}</td></tr>`;
+    $("#count").textContent = `${nf(total)} ${t("found")}`;
+    $("#dkSub").textContent = `${nf(total)} ${STRINGS.en.found}`;
+    $("#pageN").textContent = total ? `${offset + 1}–${Math.min(offset + DESK_PAGE, total)}` : "";
+    $("#prev").disabled = offset === 0; $("#next").disabled = offset + DESK_PAGE >= total;
+    paintBulk();
+  }
+  const reload = (keepPage = false) => { if (!keepPage) { offset = 0; store.set("dkOffset", 0); } load(); };
+
+  async function openPanel(serial) {
+    openSerial = serial;
+    $$("#rows tr").forEach((tr) => tr.classList.toggle("on", Number(tr.dataset.s) === serial));
+    const v = data.find((x) => x.serial === serial);
+    if (!v) return;
+    const panel = $("#panel");
+    panel.hidden = false;
+    const [{ data: house }, { data: last }] = await Promise.all([
+      v.house_no ? sb.from("voters").select("serial,name,leaning,age,gender").eq("hamlet_id", v.hamlet_id).eq("house_no", v.house_no).neq("serial", v.serial).order("serial").limit(20) : { data: [] },
+      sb.from("activity").select("user_id,at,action,detail").eq("voter_serial", v.serial).order("at", { ascending: false }).limit(3),
+    ]);
+    if (openSerial !== serial) return;
+    const tel = (v.phone || "").replace(/[^\d+]/g, "");
+    const rel = v.relation_name ? `${t("rel_" + (v.relation_type || "other"))}: ${v.relation_name}` : "";
+    panel.innerHTML = `
+      <div class="row between" style="flex-wrap:nowrap;align-items:flex-start;gap:8px">
+        <div><span class="en">#${v.serial}${v.house_no ? ` · ${esc(STRINGS.en.house)} ${esc(v.house_no)}` : ""} · ${esc(hamletName(v.hamlet_id))}</span>
+          <div style="font-size:20px;font-weight:700;line-height:1.3">${esc(v.name || "—")}</div>
+          <span class="en">${esc([v.name_en, v.age && `${v.age} ${v.gender || ""}`, rel].filter(Boolean).join(" · "))}</span></div>
+        <button type="button" class="iconbtn" id="pClose" aria-label="${esc(t("close"))}">${icon("x")}</button>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:nowrap">
+        ${tel ? `<a class="btn small grow" href="tel:${esc(tel)}">${icon("phone", "width:18px;height:18px")} ${esc(v.phone)}</a>` : ""}
+        <a class="btn small grow" href="#/v/${v.serial}">${L("Open full card", "పూర్తి వివరాలు")}</a>
+      </div>
+      <div><div class="dk-fl">${esc(t("support"))}</div>
+        <div class="dk-supbtns" id="pSup">${[...scale()].reverse().map((l) => `<button type="button" data-l="${l}" class="${v.leaning === l ? "on" : ""}" style="--c:${SUP_COLOR[l]}">${esc(t("lean_" + l))}</button>`).join("")}</div>
+        <span class="en" style="margin-top:4px">${esc(STRINGS.en.tap_clear)}</span></div>
+      <div class="dk-facts">
+        <div><span class="en">${L("Worker", "వర్కర్")}</span><select id="pWorker">${`<option value="__none">${esc(t("nobody"))}</option>` + people.map((p) => `<option value="${p.id}" ${v.assigned_to === p.id ? "selected" : ""}>${esc(p.full_name || p.username)}</option>`).join("")}</select></div>
+        <div><span class="en">${esc(t("tab_follow"))}</span><input type="date" id="pDate" value="${esc(v.follow_up_on || "")}"></div>
+        <div><span class="en">${L("Visited", "కలిశాం")}</span><b>${v.contacted ? (v.contacted_at ? esc(fmtShort(v.contacted_at)) : esc(t("st_contacted"))) : "—"}</b></div>
+        <div><span class="en">${L("Lives", "ఉంటున్నది")}</span><b>${v.away ? esc(v.away_place || t("st_away")) : L("In village", "ఊరిలోనే")}</b></div>
+      </div>
+      ${house?.length ? `<div><div class="dk-fl">${L("Same house", "అదే ఇల్లు")} (${house.length + 1})</div><ul class="dk-house">${house.map((h) => `<li><a href="#/voters" data-open="${h.serial}">${esc(h.name || "—")}</a><span class="en in">${h.gender || ""} ${h.age || ""}</span>${supCell(h.leaning)}</li>`).join("")}</ul></div>` : ""}
+      ${v.notes ? `<div><div class="dk-fl">${esc(t("notes"))}</div><div class="dk-note">${esc(v.notes)}</div></div>` : ""}
+      <a class="btn primary big" href="#/v/${v.serial}/visit">${icon("check")} ${esc(t("record_visit"))}</a>
+      ${last?.length ? `<div class="en">${last.map((h) => `${esc(relTime(h.at))} · ${esc(personName(h.user_id) || "—")} · ${esc(describe(h))}`).join("<br>")}</div>` : ""}`;
+    const save = async (patch, msg = t("saved"), undo = null) => {
+      const { error } = await sb.from("voters").update(patch).eq("serial", v.serial);
+      if (error) { fail(error); return false; }
+      Object.assign(v, patch);
+      const tr = $(`#rows tr[data-s="${v.serial}"]`);
+      if (tr) tr.outerHTML = rowHtml(v);
+      toast(msg, false, undo);
+      return true;
+    };
+    $("#pClose").addEventListener("click", () => { openSerial = null; panel.hidden = true; $$("#rows tr.on").forEach((tr) => tr.classList.remove("on")); });
+    $("#pSup").addEventListener("click", async (e) => {
+      const b = e.target.closest("button[data-l]"); if (!b) return;
+      const before = { leaning: v.leaning || "unknown", contacted: !!v.contacted };
+      const patch = b.dataset.l === v.leaning ? { leaning: "unknown" } : { leaning: b.dataset.l, contacted: true };
+      const ok = await save(patch, patch.leaning === "unknown" ? t("sup_cleared") : t("saved"), { label: t("undo"), run: async () => {
+        if (await save(before, t("undone")) && openSerial === v.serial) openPanel(v.serial);
+      } });
+      if (ok) openPanel(v.serial);
+    });
+    $("#pWorker").addEventListener("change", (e) => save({ assigned_to: e.target.value === "__none" ? null : e.target.value }));
+    $("#pDate").addEventListener("change", (e) => save({ follow_up_on: e.target.value || null }));
+    panel.addEventListener("click", (e) => {
+      const a = e.target.closest("[data-open]"); if (!a) return;
+      e.preventDefault();
+      const s = Number(a.dataset.open);
+      if (data.some((x) => x.serial === s)) openPanel(s); else location.hash = `#/v/${s}`;
+    });
+  }
+
+  let deb;
+  $("#q").addEventListener("input", (e) => { filters.q = e.target.value; store.set("filters", filters); clearTimeout(deb); deb = setTimeout(() => reload(), 300); });
+  $("#fHamlet").addEventListener("change", (e) => { filters.hamlet = e.target.value; store.set("filters", filters); reload(); });
+  $$(".dk-rail [data-k]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.k, val = b.dataset.v;
+    filters[k] = String(filters[k]) === val ? EMPTY_FILTERS[k] : val;
+    store.set("filters", filters);
+    $$(`.dk-rail [data-k="${k}"]`).forEach((x) => x.classList.toggle("on", String(filters[k]) === x.dataset.v));
+    reload();
+  }));
+  $("#clearBtn").addEventListener("click", () => { setFilters({}); deskSel.clear(); store.set("dkOffset", 0); viewVotersDesk(); });
+  $("#prev").addEventListener("click", () => { offset = Math.max(0, offset - DESK_PAGE); store.set("dkOffset", offset); load(); });
+  $("#next").addEventListener("click", () => { offset += DESK_PAGE; store.set("dkOffset", offset); load(); });
+  $("#rows").addEventListener("click", (e) => {
+    const pick = e.target.closest("[data-pick]");
+    if (pick) { const s = Number(pick.dataset.pick); if (pick.checked) deskSel.add(s); else deskSel.delete(s); return paintBulk(); }
+    const tr = e.target.closest("tr[data-s]");
+    if (tr && !e.target.closest("a")) openPanel(Number(tr.dataset.s));
+  });
+  $("#selAll").addEventListener("change", (e) => { data.forEach((v) => (e.target.checked ? deskSel.add(v.serial) : deskSel.delete(v.serial))); $$("#rows [data-pick]").forEach((c) => (c.checked = e.target.checked)); paintBulk(); });
+  $("#selClear").addEventListener("click", () => { deskSel.clear(); $$("#rows [data-pick]").forEach((c) => (c.checked = false)); paintBulk(); });
+  const bulkPatch = async (patch, label) => {
+    const list = [...deskSel];
+    for (let i = 0; i < list.length; i += 200) {
+      const { error } = await sb.from("voters").update(patch).in("serial", list.slice(i, i + 200));
+      if (error) return fail(error);
+    }
+    toast(`${list.length} → ${label}`);
+    deskSel.clear();
+    reload(true);
+  };
+  $("#selWorker").addEventListener("change", (e) => {
+    const who = e.target.value; if (!who) return;
+    const name = who === "__none" ? t("nobody") : personName(who);
+    if (!confirm(`${t("assign_confirm")} ${deskSel.size} → ${name}?`)) { e.target.value = ""; return; }
+    bulkPatch({ assigned_to: who === "__none" ? null : who }, name);
+  });
+  $("#selDate").addEventListener("change", (e) => { if (e.target.value) bulkPatch({ follow_up_on: e.target.value }, fmtDay(e.target.value)); });
+  $("#csvBtn")?.addEventListener("click", () => exportCsv());
+  $("#bulkAssign").addEventListener("click", async () => {
+    const who = $("#bulkWorker").value;
+    if (!who || !total) return;
+    const name = who === "__none" ? t("nobody") : personName(who);
+    if (!confirm(`${t("assign_confirm")} ${total} → ${name}?`)) return;
+    const { error } = await applyFilters(sb.from("voters").update({ assigned_to: who === "__none" ? null : who }), filters);
+    if (error) return fail(error);
+    toast(`${total} → ${name}`);
+    reload(true);
+  });
+  await load();
+  const want = Number(new URLSearchParams(params).get("open"));
+  if (want && data.some((v) => v.serial === want)) openPanel(want);
+}
+
+// ───────── laptop: is the team working? ─────────
+async function viewTeamDesk({ people, statBy, lastAt, isIdle, idle, roleF, n }) {
+  main.classList.add("wide");
+  const quietF = roleF === "quiet";
+  const shown = people.filter((p) => quietF ? isIdle(p) : (!roleF || p.role === roleF || (roleF === "admin" && p.role === "superadmin")));
+  let selId = store.get("teamSel", "");
+  if (!shown.some((p) => p.id === selId)) selId = (shown.find((p) => ["worker", "incharge"].includes(p.role)) || shown[0])?.id || "";
+  const field = people.filter((p) => p.active && ["worker", "incharge"].includes(p.role));
+  const dayStart = new Date(todayIST() + "T00:00:00+05:30").getTime();
+  const activeToday = field.filter((p) => lastAt[p.id] && new Date(lastAt[p.id]).getTime() >= dayStart).length;
+  const totalUn = await sb.from("voters").select("serial", { count: "exact", head: true }).is("assigned_to", null).then((r) => r.count ?? 0);
+  const vbar = (s) => `<span class="row" style="gap:8px;flex-wrap:nowrap"><span class="pbar wide"><i style="width:${pct(s.contacted, s.assigned)}%;background:var(--brand)"></i></span><span class="num">${pct(s.contacted, s.assigned)}%</span></span>`;
+  main.innerHTML = `
+    <div class="row between an-head">
+      <h1 style="margin:0">${L("Is the team working?", "బృందం పని చేస్తోందా?")}<span class="en">${people.length} people · ${activeToday} of ${field.length} active today · ${idle.length} quiet for 2+ days · ${nf(totalUn)} voters have no worker</span></h1>
+      <div class="row" style="gap:8px"><a class="btn small" href="#/activity">${icon("clock", "width:18px;height:18px")} ${esc(t("updates_title"))}</a>${isAdmin() ? `<a class="btn primary small" href="#/team/new">${icon("plus", "width:18px;height:18px")} ${esc(t("add_person"))}</a>` : ""}</div>
+    </div>
+    <div class="dk-work dk-work2">
+      <section class="card dk-table">
+        <div class="dk-chips" id="roleTabs" style="padding:12px 14px;border-bottom:1px solid var(--line)">
+          ${[["", t("all_people"), people.length], ["quiet", lang === "te" ? "పని చేయని వారు" : "Quiet 2+ days", idle.length], ["incharge", t("role_incharge"), n("incharge")], ["worker", t("role_worker"), n("worker")], ["admin", t("role_admin"), n("admin")]]
+            .map(([r, lbl, c]) => `<button type="button" class="dk-chip ${roleF === r ? "on" : ""}" data-role="${r}">${esc(lbl)} <span class="num">${c}</span></button>`).join("")}
+        </div>
+        <div class="tablewrap flat"><table class="an dk-t">
+          <thead><tr><th>${esc(t("name"))}</th><th>${L("Role", "పాత్ర")}</th><th>${L("Area", "ప్రాంతం")}</th><th class="n">${L("Voters", "ఓటర్లు")}</th><th style="min-width:150px">${L("Visited", "కలిశాం")}</th><th class="n">${L("With us", "మనవైపు")}</th><th class="n">${L("Overdue", "గడువు దాటినవి")}</th><th>${L("Last active", "చివరిగా")}</th></tr></thead>
+          <tbody>${shown.map((p) => { const s = statBy[p.id]; return `<tr data-p="${p.id}" class="${p.id === selId ? "on" : ""} ${p.active ? "" : "muted"}">
+            <td><b>${esc(p.full_name || p.username)}</b><span class="en">@${esc(p.username)}</span></td>
+            <td><span class="pill sm r-${p.role}">${esc(t("role_" + p.role))}</span></td>
+            <td>${esc((p.hamlet_ids || []).map((h) => hamletName(h)).join(", ") || (["admin", "superadmin"].includes(p.role) ? t("all_hamlets") : "—"))}</td>
+            <td class="n">${s ? nf(s.assigned) : "—"}</td><td>${s ? vbar(s) : ""}</td>
+            <td class="n">${s && s.contacted ? pct(s.ours, s.contacted) + "%" : "—"}</td>
+            <td class="n ${s?.follow_ups_due ? "bad" : ""}">${s ? nf(s.follow_ups_due) : "—"}</td>
+            <td class="${isIdle(p) ? "bad" : ""}">${lastAt[p.id] ? esc(relTime(lastAt[p.id])) : esc(t("never"))}${p.active ? "" : " · " + esc(t("inactive"))}</td></tr>`; }).join("")}</tbody>
+        </table></div>
+        <p class="en" style="padding:10px 14px;margin:0">"With us" is Sure + Likely among the voters they visited. "Overdue" counts follow-ups due today or earlier. Click a row to see what they did.</p>
+      </section>
+      <div class="dk-side">
+        <aside class="card dk-panel" id="pPanel"></aside>
+        <aside class="card dk-sec" id="unBox"><div class="dk-sec-h"><h2>${L("Voters with no worker", "వర్కర్ లేని ఓటర్లు")}</h2><span class="en in">${nf(totalUn)} in all</span></div><p class="muted" style="padding:0 16px 16px">…</p></aside>
+      </div>
+    </div>`;
+
+  $("#roleTabs").addEventListener("click", (e) => { const b = e.target.closest("[data-role]"); if (!b) return; store.set("teamRole", b.dataset.role); viewTeam(); });
+  async function showPerson(id) {
+    selId = id; store.set("teamSel", id);
+    $$("tr[data-p]").forEach((tr) => tr.classList.toggle("on", tr.dataset.p === id));
+    const p = people.find((x) => x.id === id), panel = $("#pPanel");
+    if (!p) { panel.hidden = true; return; }
+    panel.hidden = false;
+    const s = statBy[p.id];
+    panel.innerHTML = `<div class="row between" style="flex-wrap:nowrap;align-items:flex-start"><div><div style="font-size:20px;font-weight:700">${esc(p.full_name || p.username)}</div><span class="en">${esc(t("role_" + p.role))}${p.phone ? " · " + esc(p.phone) : ""}</span></div>${canManage(p) || p.id === me.id ? `<a class="small" href="#/team/p/${p.id}">${esc(t("edit"))}</a>` : ""}</div>
+      ${s ? `<div class="dk-tiles"><div><b class="num">${nf(s.contacted)}</b><span class="en">visited</span></div><div><b class="num">${nf(s.assigned - s.contacted)}</b><span class="en">to go</span></div><div class="${s.follow_ups_due ? "warn" : ""}"><b class="num">${nf(s.follow_ups_due)}</b><span class="en">follow-ups due</span></div></div>` : `<p class="en">No voters assigned.</p>`}
+      <div class="row" style="gap:8px;flex-wrap:nowrap">${p.phone ? `<a class="btn small grow" href="tel:${esc(p.phone.replace(/[^\d+]/g, ""))}">${icon("phone", "width:18px;height:18px")} ${esc(t("call"))}</a>` : ""}<a class="btn small grow" href="#/activity?u=${p.id}">${esc(t("updates"))}</a></div>
+      <div class="dk-fl">${L("Recent activity", "ఇటీవలి పని")}</div><div id="pActs" class="en">…</div>`;
+    const { data: acts } = await sb.from("activity").select("voter_serial,user_id,at,action,detail").eq("user_id", p.id).order("at", { ascending: false }).limit(8);
+    if (selId !== id) return;
+    $("#pActs").outerHTML = acts?.length ? `<ul class="dk-feed">${acts.map((a) => `<li><span class="time">${esc(relTime(a.at))}</span><span>${esc(describe(a))} · <a href="#/v/${a.voter_serial}">#${a.voter_serial}</a></span></li>`).join("")}</ul>` : `<p class="en">${esc(t("never"))}</p>`;
+  }
+  $("tbody").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-p]"); if (tr && !e.target.closest("a")) showPerson(tr.dataset.p); });
+  if (selId) showPerson(selId); else $("#pPanel").hidden = true;
+  const counts = await Promise.all(hamlets.map((h) => sb.from("voters").select("serial", { count: "exact", head: true }).is("assigned_to", null).eq("hamlet_id", h.id).then((r) => [h, r.count ?? 0])));
+  const un = counts.filter(([, c]) => c).sort((a, b) => b[1] - a[1]);
+  const box = $("#unBox");
+  if (box) box.innerHTML = `<div class="dk-sec-h"><h2>${L("Voters with no worker", "వర్కర్ లేని ఓటర్లు")}</h2><span class="en in">${nf(totalUn)} in all</span></div>` +
+    (un.length ? un.map(([h, c]) => `<a class="dk-todo" href="#/voters" ${goAttr({ hamlet: String(h.id), status: "unassigned" })}><span class="grow"><b>${esc(hamletName(h.id))}</b></span><b class="num">${nf(c)}</b><span class="en in">${esc(t("assign"))} →</span></a>`).join("") : `<p class="muted" style="padding:0 16px 16px">Everyone has a worker.</p>`);
 }
 
 // ───────── router & boot ─────────
@@ -1770,8 +2157,8 @@ function route() {
   if (h.startsWith("/follow")) return viewFollow();
   if (h.startsWith("/poll")) return viewPoll();
   if (h.startsWith("/reports") || h === "/dash") return viewReports();
-  m = h.match(/^\/(?:dashboard|analysis)(?:\/(\w+))?/);
-  if (m) return viewAnalytics(m[1]);
+  m = h.match(/^\/(?:dashboard|analysis)(?:\/(\w+))?(?:\/(\d+))?/);
+  if (m) return viewAnalytics(m[1], false, m[2] || "");
   if (!location.hash && isAdmin() && matchMedia("(min-width: 1000px)").matches) return viewAnalytics();
   m = h.match(/^\/team\/(new|p\/([\w-]+))/);
   if (m) return viewPerson(m[2] || "new");
@@ -1784,6 +2171,7 @@ function route() {
   return viewToday();
 }
 window.addEventListener("hashchange", route);
+matchMedia("(min-width: 1000px)").addEventListener("change", () => { if (me) route(); });
 
 async function boot() {
   applyStaticText();
